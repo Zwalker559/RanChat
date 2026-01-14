@@ -77,7 +77,7 @@ service cloud.firestore {
       // Allow any signed-in user to read the queue to find a match
       allow list, get: if isSignedIn();
       // Allow a user to add/remove themselves from the queue
-      allow create, delete: if isOwner(userId);
+      allow write: if isOwner(userId);
     }
     
     /**

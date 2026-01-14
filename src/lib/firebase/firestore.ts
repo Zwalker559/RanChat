@@ -75,32 +75,43 @@ export const findPartner = async (
   uid: string,
   preferences: UserPreferences
 ) => {
-  // Build query based on preferences
+  // Query for potential partners, fetch a small batch to filter client-side
   const queueRef = collection(firestore, 'queue');
-  let q;
-
-  if (preferences.matchPreference === 'both') {
-      q = query(
-          queueRef,
-          where('uid', '!=', uid),
-          orderBy('timestamp', 'asc'),
-          limit(1)
-      );
-  } else {
-      q = query(
-          queueRef,
-          where('uid', '!=', uid),
-          where('preferences.gender', '==', preferences.matchPreference),
-          orderBy('uid'), // required for inequality
-          orderBy('timestamp', 'asc'),
-          limit(1)
-      );
-  }
+  const q = query(
+      queueRef,
+      orderBy('timestamp', 'asc'),
+      limit(10) // Fetch 10 potential partners
+  );
 
   const querySnapshot = await getDocs(q);
 
-  if (querySnapshot.empty) {
-    // No one in queue that matches, so add current user to queue
+  let partnerDoc = null;
+  for (const doc of querySnapshot.docs) {
+      const data = doc.data();
+      if (data.uid === uid) continue; // Skip myself
+
+      const partnerPrefs = data.preferences as UserPreferences;
+      
+      const selfGender = preferences.gender;
+      const selfPref = preferences.matchPreference;
+      
+      const partnerGender = partnerPrefs.gender;
+      const partnerPref = partnerPrefs.matchPreference;
+
+      // My preference matches their gender
+      const selfMatch = selfPref === 'both' || selfPref === partnerGender;
+      // Their preference matches my gender
+      const partnerMatch = partnerPref === 'both' || partnerPref === selfGender;
+
+      if (selfMatch && partnerMatch) {
+          partnerDoc = doc;
+          break; // Found a suitable partner
+      }
+  }
+
+
+  if (!partnerDoc) {
+    // No match found in the current queue, so add/update current user in queue
     await setDoc(doc(firestore, 'queue', uid), {
       uid,
       preferences,
@@ -109,7 +120,6 @@ export const findPartner = async (
     return null;
   } else {
     // Match found!
-    const partnerDoc = querySnapshot.docs[0];
     const partnerUid = partnerDoc.data().uid;
 
     // Create a new chat session
