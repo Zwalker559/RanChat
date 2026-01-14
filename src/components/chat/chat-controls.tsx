@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   Mic,
   MicOff,
@@ -8,6 +8,7 @@ import {
   VideoOff,
   SkipForward,
   StopCircle,
+  Loader2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -19,13 +20,13 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-  AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import { useToast } from "@/hooks/use-toast";
+import { cn } from "@/lib/utils";
 
 interface ChatControlsProps {
   isMicOn: boolean;
   isCamOn: boolean;
+  isConnecting: boolean;
   onToggleMic: () => void;
   onToggleCam: () => void;
   onSkip: () => void;
@@ -35,35 +36,40 @@ interface ChatControlsProps {
 export function ChatControls({
   isMicOn,
   isCamOn,
+  isConnecting,
   onToggleMic,
   onToggleCam,
   onSkip,
   onStop,
 }: ChatControlsProps) {
-  const [isSkipDisabled, setIsSkipDisabled] = useState(false);
-  const { toast } = useToast();
+  const [showStopDialog, setShowStopDialog] = useState(false);
+  const [isSkipOnCooldown, setIsSkipOnCooldown] = useState(false);
 
-  const handleSkipClick = () => {
-    if (isSkipDisabled) {
-      toast({
-        description: "Please wait before skipping again.",
-        variant: "default", 
-        style: {
-          backgroundColor: 'hsl(var(--destructive))',
-          color: 'hsl(var(--destructive-foreground))',
-        }
-      });
-      return;
+  const isCombinedButtonDisabled = isConnecting || isSkipOnCooldown;
+  const combinedButtonText = isCombinedButtonDisabled ? "Stop" : "Skip";
+
+  useEffect(() => {
+    let timeoutId: NodeJS.Timeout;
+    if (isConnecting) {
+      setIsSkipOnCooldown(true);
+      // Cooldown should last as long as the connection attempt + a buffer
+      timeoutId = setTimeout(() => {
+        setIsSkipOnCooldown(false);
+      }, 3000); // Should match the skip logic duration
     }
-    onSkip();
-    setIsSkipDisabled(true);
-    setTimeout(() => {
-      setIsSkipDisabled(false);
-    }, 3000); // 3-second cooldown
+    return () => clearTimeout(timeoutId);
+  }, [isConnecting]);
+
+  const handleCombinedButtonClick = () => {
+    if (isCombinedButtonDisabled) {
+      setShowStopDialog(true);
+    } else {
+      onSkip();
+    }
   };
 
   return (
-    <div className="flex items-center justify-center gap-2 md:gap-4 p-2 rounded-lg bg-card/50 backdrop-blur-sm">
+    <div className="flex items-center justify-center gap-2 md:gap-4 p-2 rounded-full bg-card/60 backdrop-blur-md border border-border shadow-lg">
       <Button
         variant={isMicOn ? "secondary" : "destructive"}
         size="icon"
@@ -84,34 +90,37 @@ export function ChatControls({
       </Button>
 
       <Button
-        variant="outline"
-        className="h-14 px-6 rounded-full font-bold text-lg border-2"
-        onClick={handleSkipClick}
-        disabled={isSkipDisabled}
+        className={cn(
+            "h-14 px-6 rounded-full font-bold text-lg border-2 transition-all w-40",
+            isCombinedButtonDisabled 
+                ? "bg-destructive border-destructive text-destructive-foreground"
+                : "bg-primary border-primary text-primary-foreground"
+        )}
+        onClick={handleCombinedButtonClick}
       >
-        <SkipForward className="mr-2" /> Skip
+        {isConnecting ? (
+            <Loader2 className="mr-2 animate-spin" />
+        ) : isCombinedButtonDisabled ? (
+            <StopCircle className="mr-2" />
+        ) : (
+            <SkipForward className="mr-2" />
+        )}
+        {isConnecting ? "Finding..." : combinedButtonText}
       </Button>
 
-      <AlertDialog>
-        <AlertDialogTrigger asChild>
-          <Button
-            variant="destructive"
-            className="h-14 px-6 rounded-full font-bold text-lg border-2 border-destructive"
-          >
-            <StopCircle className="mr-2" /> Stop
-          </Button>
-        </AlertDialogTrigger>
+      <AlertDialog open={showStopDialog} onOpenChange={setShowStopDialog}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Are you sure?</AlertDialogTitle>
             <AlertDialogDescription>
-              This will end your current chat session and you will be returned
-              to the homepage.
+              This will end your current chat session and return you to the homepage.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={onStop} className="bg-destructive hover:bg-destructive/90">Stop Chat</AlertDialogAction>
+            <AlertDialogAction onClick={() => { onStop(); setShowStopDialog(false); }} className="bg-destructive hover:bg-destructive/90">
+              Stop Chat
+            </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
