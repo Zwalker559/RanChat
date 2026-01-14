@@ -1,0 +1,207 @@
+{
+  "entities": {
+    "User": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "User",
+      "type": "object",
+      "description": "Represents a user in the RanChat application.",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique identifier for the User entity."
+        },
+        "username": {
+          "type": "string",
+          "description": "The username chosen by the user."
+        },
+        "gender": {
+          "type": "string",
+          "description": "The gender of the user.",
+          "format": "enum",
+          "items": {
+            "type": "string"
+          }
+        },
+        "preferredGender": {
+          "type": "string",
+          "description": "The preferred gender the user wants to match with.",
+          "format": "enum",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "id",
+        "username",
+        "gender",
+        "preferredGender"
+      ]
+    },
+    "ChatSession": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "ChatSession",
+      "type": "object",
+      "description": "Represents a chat session between two users.",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique identifier for the ChatSession entity."
+        },
+        "user1Id": {
+          "type": "string",
+          "description": "Reference to User 1. (Relationship: User 1:N ChatSession)"
+        },
+        "user2Id": {
+          "type": "string",
+          "description": "Reference to User 2. (Relationship: User 1:N ChatSession)"
+        },
+        "startTime": {
+          "type": "string",
+          "description": "The start time of the chat session.",
+          "format": "date-time"
+        },
+        "endTime": {
+          "type": "string",
+          "description": "The end time of the chat session.",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "user1Id",
+        "user2Id",
+        "startTime",
+        "endTime"
+      ]
+    },
+    "ChatMessage": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "ChatMessage",
+      "type": "object",
+      "description": "Represents a message sent within a chat session.",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique identifier for the ChatMessage entity."
+        },
+        "chatSessionId": {
+          "type": "string",
+          "description": "Reference to the ChatSession this message belongs to. (Relationship: ChatSession 1:N ChatMessage)"
+        },
+        "senderId": {
+          "type": "string",
+          "description": "Reference to the User who sent the message. (Relationship: User 1:N ChatMessage)"
+        },
+        "messageText": {
+          "type": "string",
+          "description": "The text content of the message."
+        },
+        "mediaUrl": {
+          "type": "string",
+          "description": "URL of any media attached to the message (image, video).",
+          "format": "uri"
+        },
+        "timestamp": {
+          "type": "string",
+          "description": "The timestamp when the message was sent.",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "chatSessionId",
+        "senderId",
+        "messageText",
+        "timestamp"
+      ]
+    }
+  },
+  "auth": {
+    "providers": [
+      "password",
+      "anonymous"
+    ]
+  },
+  "firestore": {
+    "structure": [
+      {
+        "path": "/users/{userId}",
+        "definition": {
+          "entityName": "User",
+          "schema": {
+            "$ref": "#/backend/entities/User"
+          },
+          "description": "Stores user profile information. Includes 'userId' as a parameter.",
+          "params": [
+            {
+              "name": "userId",
+              "description": "The unique identifier for the user."
+            }
+          ]
+        }
+      },
+      {
+        "path": "/users/{userId}/chat_sessions/{chatSessionId}",
+        "definition": {
+          "entityName": "ChatSession",
+          "schema": {
+            "$ref": "#/backend/entities/ChatSession"
+          },
+          "description": "Stores chat session data for a specific user. Includes 'userId' and 'chatSessionId' as parameters. 'user1Id' and 'user2Id' are stored within the document for authorization independence.",
+          "params": [
+            {
+              "name": "userId",
+              "description": "The unique identifier for the user."
+            },
+            {
+              "name": "chatSessionId",
+              "description": "The unique identifier for the chat session."
+            }
+          ]
+        }
+      },
+      {
+        "path": "/users/{userId}/chat_sessions/{chatSessionId}/messages/{messageId}",
+        "definition": {
+          "entityName": "ChatMessage",
+          "schema": {
+            "$ref": "#/backend/entities/ChatMessage"
+          },
+          "description": "Stores chat messages for a specific chat session. Includes 'userId', 'chatSessionId', and 'messageId' as parameters. 'senderId' and 'chatSessionId' are stored within the document for authorization independence.",
+          "params": [
+            {
+              "name": "userId",
+              "description": "The unique identifier for the user."
+            },
+            {
+              "name": "chatSessionId",
+              "description": "The unique identifier for the chat session."
+            },
+            {
+              "name": "messageId",
+              "description": "The unique identifier for the message."
+            }
+          ]
+        }
+      },
+      {
+        "path": "/active_users/{userId}",
+        "definition": {
+          "entityName": "User",
+          "schema": {
+            "$ref": "#/backend/entities/User"
+          },
+          "description": "Stores presence information (online status) for active users. Includes 'userId' as a parameter.",
+          "params": [
+            {
+              "name": "userId",
+              "description": "The unique identifier for the user."
+            }
+          ]
+        }
+      }
+    ],
+    "reasoning": "The Firestore structure is designed to optimize for real-time chat functionality and presence tracking while adhering to the principles of Authorization Independence and Structural Segregation. User profiles, chat sessions, and messages are stored in separate collections with appropriate subcollections to maintain a clear separation of concerns. The `/active_users` collection supports presence tracking. The structure avoids hierarchical authorization dependencies by storing authorization-related data (like user IDs in chat sessions) directly within the relevant documents, enabling atomic operations and simplifying security rules. The use of path-based ownership for users and their associated chat sessions/messages ensures data privacy and simplifies access control. This structure supports the required QAPs by segregating data based on access requirements and enabling efficient `list` operations within user-owned data."
+  }
+}
