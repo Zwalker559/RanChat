@@ -8,6 +8,9 @@ import { ChatControls } from "@/components/chat/chat-controls";
 import { useRouter } from "next/navigation";
 import { useToast } from "@/hooks/use-toast";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
+import { Minus, Plus } from "lucide-react";
 
 export default function ChatPage() {
   const router = useRouter();
@@ -16,6 +19,7 @@ export default function ChatPage() {
   const [isCamOn, setIsCamOn] = useState(true);
   const [isConnecting, setIsConnecting] = useState(false);
   const [hasCameraPermission, setHasCameraPermission] = useState(true);
+  const [isLocalVideoMinimized, setIsLocalVideoMinimized] = useState(false);
   
   const localVideoRef = useRef<HTMLVideoElement>(null);
 
@@ -86,7 +90,7 @@ export default function ChatPage() {
 
 
   return (
-    <main className="grid h-screen max-h-screen grid-cols-1 lg:grid-cols-[1fr_350px] overflow-hidden">
+    <main className="grid h-screen max-h-screen grid-cols-1 lg:grid-cols-[1fr_400px] overflow-hidden">
       <div className="relative flex flex-col items-center justify-center p-4 bg-black/90">
         <VideoPlayer
           src={remoteVideo?.imageUrl ?? ''}
@@ -95,7 +99,10 @@ export default function ChatPage() {
           isConnecting={isConnecting}
           className="w-full h-full"
         />
-        <div className="absolute top-4 right-4 z-10 w-1/4 max-w-[250px] min-w-[120px]">
+        <div className={cn(
+            "absolute top-4 right-4 z-20 transition-all duration-300 ease-in-out",
+            isLocalVideoMinimized ? "w-28" : "w-1/5 max-w-[200px] min-w-[150px]"
+          )}>
           <VideoPlayer
             name="You"
             isMuted={!isMicOn}
@@ -111,6 +118,15 @@ export default function ChatPage() {
                 </Alert>
              )}
           </VideoPlayer>
+           <Button 
+              size="icon" 
+              variant="secondary" 
+              className="absolute -top-2 -left-2 z-30 h-6 w-6 rounded-full bg-background/50 hover:bg-background"
+              onClick={() => setIsLocalVideoMinimized(prev => !prev)}
+            >
+              {isLocalVideoMinimized ? <Plus size={14} /> : <Minus size={14} />}
+              <span className="sr-only">{isLocalVideoMinimized ? 'Maximize' : 'Minimize'} video</span>
+            </Button>
         </div>
         <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-10 w-full max-w-sm px-4">
           <ChatControls
@@ -124,7 +140,7 @@ export default function ChatPage() {
           />
         </div>
       </div>
-      <div className="w-full lg:max-w-[350px] flex flex-col bg-card/50 backdrop-blur-sm border-l border-border h-full">
+      <div className="w-full lg:max-w-[400px] flex flex-col bg-card/50 backdrop-blur-sm border-l border-border h-full">
         <ChatWindow />
       </div>
     </main>
