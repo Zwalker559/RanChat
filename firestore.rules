@@ -85,15 +85,19 @@ service cloud.firestore {
      * @path /chats/{chatId}
      */
     match /chats/{chatId} {
+      // Allow participants to get the chat doc
       allow get, delete: if isChatParticipant(resource);
+      // Allow any signed-in user to create a chat if they are a participant
       allow create: if isSignedIn() && request.auth.uid in request.resource.data.participants;
+      // Allow a user to listen for chats they are a part of
+      allow list: if isSignedIn() && request.auth.uid in query.filters.participants;
       
       // Rules for WebRTC signaling subcollection
       match /peers/{peerId} {
         allow get, create, update, delete: if isChatParticipant(get(/databases/$(database)/documents/chats/$(chatId)));
         
         match /iceCandidates/{candidateId} {
-           allow get, create: if isChatParticipant(get(/databases/$(database)/documents/chats/$(chatId)));
+           allow get, create, list: if isChatParticipant(get(/databases/$(database)/documents/chats/$(chatId)));
         }
       }
       
