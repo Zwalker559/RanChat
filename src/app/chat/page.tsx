@@ -28,24 +28,17 @@ export default function ChatPage() {
   const handleNext = () => {
     if (isConnecting) {
       // If we are connecting, this button acts as a 'Stop' button.
-      // For now, it just cancels the connection attempt.
       setIsConnecting(false);
-      console.log("Search cancelled.");
+      // Navigate back to home on stop.
+      router.push("/");
       return;
     }
     console.log("Skipping chat...");
     setIsConnecting(true);
+    // In a real app, you'd find a new user here, with a higher chance for the selected gender.
     setTimeout(() => {
-      // In a real app, you'd connect to a new user here.
       setIsConnecting(false);
     }, 1500);
-  };
-
-  const handleStop = () => {
-    // This will handle leaving the chat entirely and returning home.
-    // In the future, this is where account deletion would be triggered.
-    console.log("Stopping chat session...");
-    router.push("/");
   };
   
   useEffect(() => {
@@ -107,37 +100,39 @@ export default function ChatPage() {
                 data-ai-hint={remoteVideo?.imageHint}
                 name="Stranger"
                 isConnecting={isConnecting}
-                className="w-full max-w-xl max-h-[60vh] aspect-video"
+                className="w-full max-w-lg max-h-[50vh] aspect-video"
             />
         </div>
         <div className={cn(
             "absolute top-4 right-4 z-20 transition-all duration-300 ease-in-out",
-            isLocalVideoMinimized ? "w-28" : "w-1/6 max-w-[180px] min-w-[140px]"
+            isLocalVideoMinimized ? "w-24" : "w-1/6 max-w-[160px] min-w-[120px]"
           )}>
-          <VideoPlayer
-            name="You"
-            isMuted={!isMicOn}
-            isCamOff={!isCamOn}
-          >
-             <video ref={localVideoRef} className="w-full h-full object-cover" autoPlay muted playsInline />
-             { !hasCameraPermission && isCamOn && (
-                <Alert variant="destructive" className="absolute bottom-2 left-2 right-2 p-2">
-                  <AlertTitle className="text-xs">Camera Required</AlertTitle>
-                  <AlertDescription className="text-xs">
-                    Please allow camera access.
-                  </AlertDescription>
-                </Alert>
-             )}
-          </VideoPlayer>
-           <Button 
-              size="icon" 
-              variant="secondary" 
-              className="absolute -top-2 -left-2 z-30 h-6 w-6 rounded-full bg-background/50 hover:bg-background"
-              onClick={() => setIsLocalVideoMinimized(prev => !prev)}
+          <div className="relative">
+            <VideoPlayer
+              name="You"
+              isMuted={!isMicOn}
+              isCamOff={!isCamOn}
             >
-              {isLocalVideoMinimized ? <Plus size={14} /> : <Minus size={14} />}
-              <span className="sr-only">{isLocalVideoMinimized ? 'Maximize' : 'Minimize'} video</span>
-            </Button>
+              <video ref={localVideoRef} className="w-full h-full object-cover" autoPlay muted playsInline />
+              { !hasCameraPermission && isCamOn && (
+                  <Alert variant="destructive" className="absolute bottom-2 left-2 right-2 p-2">
+                    <AlertTitle className="text-xs">Camera Required</AlertTitle>
+                    <AlertDescription className="text-xs">
+                      Please allow camera access.
+                    </AlertDescription>
+                  </Alert>
+              )}
+            </VideoPlayer>
+            <Button 
+                size="icon" 
+                variant="ghost" 
+                className="absolute top-0 right-0 z-30 h-6 w-6 rounded-full bg-black/30 text-white hover:bg-black/50"
+                onClick={() => setIsLocalVideoMinimized(prev => !prev)}
+              >
+                {isLocalVideoMinimized ? <Plus size={14} /> : <Minus size={14} />}
+                <span className="sr-only">{isLocalVideoMinimized ? 'Maximize' : 'Minimize'} video</span>
+              </Button>
+          </div>
         </div>
         <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-10 w-full max-w-md px-4">
           <ChatControls
@@ -147,7 +142,6 @@ export default function ChatPage() {
             onToggleMic={() => setIsMicOn((prev) => !prev)}
             onToggleCam={() => setIsCamOn((prev) => !prev)}
             onNext={handleNext}
-            onStop={handleStop}
           />
         </div>
       </div>

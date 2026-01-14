@@ -7,9 +7,8 @@ import {
   Video,
   VideoOff,
   SkipForward,
-  StopCircle,
   Loader2,
-  PhoneOff
+  PhoneOff,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -23,6 +22,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { cn } from "@/lib/utils";
+import { useRouter } from "next/navigation";
 
 interface ChatControlsProps {
   isMicOn: boolean;
@@ -31,7 +31,6 @@ interface ChatControlsProps {
   onToggleMic: () => void;
   onToggleCam: () => void;
   onNext: () => void;
-  onStop: () => void;
 }
 
 export function ChatControls({
@@ -41,9 +40,17 @@ export function ChatControls({
   onToggleMic,
   onToggleCam,
   onNext,
-  onStop,
 }: ChatControlsProps) {
   const [showStopDialog, setShowStopDialog] = useState(false);
+  const router = useRouter();
+
+  const handleStop = () => {
+    // This will handle leaving the chat entirely and returning home.
+    // In the future, this is where account deletion would be triggered.
+    console.log("Stopping chat session...");
+    router.push("/");
+  };
+
 
   return (
     <div className="flex items-center justify-center gap-2 md:gap-4 p-2 rounded-full bg-card/60 backdrop-blur-md border border-border shadow-lg">
@@ -103,13 +110,13 @@ export function ChatControls({
           <AlertDialogHeader>
             <AlertDialogTitle>End Chat Session?</AlertDialogTitle>
             <AlertDialogDescription>
-              Are you sure you want to end this chat and return to the home screen? This action cannot be undone.
+              Are you sure you want to end this chat and return to the home screen? This will delete your account and all data. This action cannot be undone.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={() => { onStop(); setShowStopDialog(false); }} className="bg-destructive hover:bg-destructive/90">
-              End Session
+            <AlertDialogAction onClick={() => { handleStop(); setShowStopDialog(false); }} className="bg-destructive hover:bg-destructive/90">
+              End Session & Delete
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
