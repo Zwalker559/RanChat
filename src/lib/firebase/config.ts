@@ -6,12 +6,12 @@ import {getStorage} from 'firebase/storage';
 import {getFunctions} from 'firebase/functions';
 
 const firebaseConfig = {
-  apiKey: 'TODO:REPLACE_WITH_YOUR_FIREBASE_API_KEY',
-  authDomain: 'TODO:REPLACE_WITH_YOUR_FIREBASE_AUTH_DOMAIN',
-  projectId: 'TODO:REPLACE_WITH_YOUR_FIREBASE_PROJECT_ID',
-  storageBucket: 'TODO:REPLACE_WITH_YOUR_FIREBASE_STORAGE_BUCKET',
-  messagingSenderId: 'TODO:REPLACE_WITH_YOUR_FIREBASE_MESSAGING_SENDER_ID',
-  appId: 'TODO:REPLACE_WITH_YOUR_FIREBASE_APP_ID',
+  "projectId": "studio-1703865431-b7704",
+  "appId": "1:702684370770:web:5275bec79f81b01fa1cc8b",
+  "apiKey": "AIzaSyDwmUKJBhCUbAmv661lqbyCciPl3JSkDrU",
+  "authDomain": "studio-1703865431-b7704.firebaseapp.com",
+  "measurementId": "",
+  "messagingSenderId": "702684370770"
 };
 
 const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();

@@ -1,7 +1,7 @@
 "use client";
 import {useState, useEffect, createContext, useContext, ReactNode} from 'react';
 import {onAuthStateChanged, signInAnonymously, User as FirebaseAuthUser} from 'firebase/auth';
-import {auth, firestore} from '@/lib/firebase/config';
+import { auth, firestore } from '@/lib/firebase/config';
 import {doc, onSnapshot} from 'firebase/firestore';
 import type {User as AppUser} from '@/lib/types';
 
