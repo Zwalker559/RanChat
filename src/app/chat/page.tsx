@@ -98,7 +98,7 @@ export default function ChatPage() {
                 data-ai-hint={remoteVideo?.imageHint}
                 name="Stranger"
                 isConnecting={isConnecting}
-                className="w-full max-w-4xl max-h-[80vh] aspect-video"
+                className="w-full max-w-2xl max-h-[70vh] aspect-video"
             />
         </div>
         <div className={cn(
