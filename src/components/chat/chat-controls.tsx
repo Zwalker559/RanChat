@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import {
   Mic,
   MicOff,
@@ -43,30 +43,16 @@ export function ChatControls({
   onStop,
 }: ChatControlsProps) {
   const [showStopDialog, setShowStopDialog] = useState(false);
-  const [isSkipOnCooldown, setIsSkipOnCooldown] = useState(false);
 
-  const isCombinedButtonDisabled = isConnecting || isSkipOnCooldown;
-  const combinedButtonText = isCombinedButtonDisabled ? "Stop" : "Skip";
-
-  useEffect(() => {
-    let timeoutId: NodeJS.Timeout;
+  const handleMainButtonClick = () => {
     if (isConnecting) {
-      setIsSkipOnCooldown(true);
-      // Cooldown should last as long as the connection attempt + a buffer
-      timeoutId = setTimeout(() => {
-        setIsSkipOnCooldown(false);
-      }, 3000); // Should match the skip logic duration
-    }
-    return () => clearTimeout(timeoutId);
-  }, [isConnecting]);
-
-  const handleCombinedButtonClick = () => {
-    if (isCombinedButtonDisabled) {
       setShowStopDialog(true);
     } else {
       onSkip();
     }
   };
+  
+  const mainButtonText = isConnecting ? "Stop" : "Skip";
 
   return (
     <div className="flex items-center justify-center gap-2 md:gap-4 p-2 rounded-full bg-card/60 backdrop-blur-md border border-border shadow-lg">
@@ -92,20 +78,28 @@ export function ChatControls({
       <Button
         className={cn(
             "h-14 px-6 rounded-full font-bold text-lg border-2 transition-all w-40",
-            isCombinedButtonDisabled 
+            isConnecting 
                 ? "bg-destructive border-destructive text-destructive-foreground"
                 : "bg-primary border-primary text-primary-foreground"
         )}
-        onClick={handleCombinedButtonClick}
+        onClick={handleMainButtonClick}
+        disabled={isConnecting && showStopDialog}
       >
         {isConnecting ? (
             <Loader2 className="mr-2 animate-spin" />
-        ) : isCombinedButtonDisabled ? (
-            <StopCircle className="mr-2" />
         ) : (
             <SkipForward className="mr-2" />
         )}
-        {isConnecting ? "Finding..." : combinedButtonText}
+        {isConnecting ? "Finding..." : "Skip"}
+      </Button>
+      
+      <Button 
+        variant="outline"
+        className="h-14 px-6 rounded-full font-bold text-lg border-2 transition-all"
+        onClick={() => setShowStopDialog(true)}
+      >
+          <StopCircle className="mr-2" />
+          Stop
       </Button>
 
       <AlertDialog open={showStopDialog} onOpenChange={setShowStopDialog}>

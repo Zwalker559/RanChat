@@ -92,13 +92,15 @@ export default function ChatPage() {
   return (
     <main className="grid h-screen max-h-screen grid-cols-1 lg:grid-cols-[1fr_400px] overflow-hidden">
       <div className="relative flex flex-col items-center justify-center p-4 bg-black/90">
-        <VideoPlayer
-          src={remoteVideo?.imageUrl ?? ''}
-          data-ai-hint={remoteVideo?.imageHint}
-          name="Stranger"
-          isConnecting={isConnecting}
-          className="w-full h-full"
-        />
+        <div className="w-full h-full flex items-center justify-center">
+            <VideoPlayer
+                src={remoteVideo?.imageUrl ?? ''}
+                data-ai-hint={remoteVideo?.imageHint}
+                name="Stranger"
+                isConnecting={isConnecting}
+                className="w-full max-w-4xl max-h-[80vh] aspect-video"
+            />
+        </div>
         <div className={cn(
             "absolute top-4 right-4 z-20 transition-all duration-300 ease-in-out",
             isLocalVideoMinimized ? "w-28" : "w-1/5 max-w-[200px] min-w-[150px]"
