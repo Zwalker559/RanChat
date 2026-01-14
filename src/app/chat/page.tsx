@@ -11,8 +11,10 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Minus, Plus } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { findPartner, createOffer, listenForOffer, createAnswer, listenForAnswer, addIceCandidate, listenForIceCandidates, endChat, updateUserStatus, getUser, listenForPartner, deleteUser, getChatDoc } from '@/lib/firebase/firestore';
-import { Unsubscribe } from 'firebase/firestore';
+import { findPartner, createOffer, listenForOffer, createAnswer, listenForAnswer, addIceCandidate, listenForIceCandidates, endChat, updateUserStatus, getUser, listenForPartner, getChatDoc } from '@/lib/firebase/firestore';
+import { Unsubscribe, onSnapshot, doc } from 'firebase/firestore';
+import { firestore } from '@/lib/firebase/config';
+import { deleteUser as deleteAuthUser } from 'firebase/auth';
 
 const servers = {
   iceServers: [
@@ -132,8 +134,8 @@ function ChatPageContent() {
     firestoreUnsubscribers.current.push(unsubIce);
     
     // Listen for partner disconnecting
-    const chatDocUnsub = onSnapshot(doc(firestore, 'chats', currentChatId), (doc) => {
-        if (!doc.exists()) {
+    const chatDocUnsub = onSnapshot(doc(firestore, 'chats', currentChatId), (docSnap) => {
+        if (!docSnap.exists()) {
             console.log("Chat has been ended by partner.");
             toast({ title: "Partner has disconnected", description: "Finding a new partner..." });
             handleNext(true); // Automatically find a new partner
@@ -194,19 +196,36 @@ function ChatPageContent() {
   }, [user, appUser, cleanup, router, startWebRTC, startMedia]);
 
   const handleStop = async () => {
-      setIsConnecting(false);
-      await cleanup();
-      if(user) await deleteUser(user.uid);
-      router.push("/");
-  }
+    setIsConnecting(false);
+    await cleanup();
+    if (user) {
+      try {
+        await deleteAuthUser(user);
+        console.log("Anonymous user deleted.");
+      } catch (error) {
+        console.error("Error deleting anonymous user:", error);
+      }
+    }
+    router.push("/");
+  };
 
   // Initial media setup & cleanup
   useEffect(() => {
     startMedia();
+    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+      if (user) {
+        // This is not guaranteed to run, but it's the best we can do.
+        deleteAuthUser(user).catch(e => console.error("Could not delete user on unload", e));
+      }
+    };
+  
+    window.addEventListener('beforeunload', handleBeforeUnload);
+
     return () => {
+        window.removeEventListener('beforeunload', handleBeforeUnload);
         cleanup(true);
     };
-  }, [startMedia, cleanup]);
+  }, [startMedia, cleanup, user]);
   
   // Main logic to start or join a chat
   useEffect(() => {
@@ -247,7 +266,7 @@ function ChatPageContent() {
         }
     }
 
-  }, [user, appUser, searchParams, hasCameraPermission, startMedia, router, startWebRTC, handleNext]);
+  }, [user, appUser, searchParams, hasCameraPermission, startMedia, router, startWebRTC, handleNext, toast, chatId]);
 
   return (
     <main className="grid h-screen max-h-screen grid-cols-1 lg:grid-cols-[1fr_400px] overflow-hidden">

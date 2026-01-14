@@ -34,13 +34,10 @@ export const createUser = async (
     createdAt: serverTimestamp(),
   };
   await setDoc(userRef, newUser, { merge: true });
+  // Also create a document in active_users to show presence
+  await setDoc(doc(firestore, 'active_users', uid), { uid, lastSeen: serverTimestamp() });
   return newUser;
 };
-
-export const deleteUser = async (uid: string) => {
-    const userRef = doc(firestore, 'users', uid);
-    await deleteDoc(userRef);
-}
 
 export const getUser = async (uid: string): Promise<User | null> => {
   const userRef = doc(firestore, 'users', uid);
@@ -51,7 +48,13 @@ export const getUser = async (uid: string): Promise<User | null> => {
 export const updateUserStatus = async (uid: string, status: User['status']) => {
   if (!uid) return;
   const userRef = doc(firestore, 'users', uid);
+  const activeUserRef = doc(firestore, 'active_users', uid);
   try {
+    if (status === 'offline') {
+      await deleteDoc(activeUserRef);
+    } else {
+      await setDoc(activeUserRef, { uid, lastSeen: serverTimestamp() }, { merge: true });
+    }
     await updateDoc(userRef, {status});
   } catch(e) {
     //   User might not exist, which is fine
