@@ -4,7 +4,8 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
 import * as z from "zod";
 import { useRouter } from "next/navigation";
-
+import { useAuth } from "@/hooks/use-auth";
+import { createUser, updateUserStatus } from "@/lib/firebase/firestore";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -26,6 +27,7 @@ import { Input } from "@/components/ui/input";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Rocket } from "lucide-react";
 import { Label } from "./ui/label";
+import { useEffect, useState } from "react";
 
 const formSchema = z.object({
   username: z.string().min(2, {
@@ -42,23 +44,55 @@ const formSchema = z.object({
 });
 
 export function StartChatDialog() {
+  const [isOpen, setIsOpen] = useState(false);
   const router = useRouter();
+  const { user, appUser } = useAuth();
+  
   const form = useForm<z.infer<typeof formSchema>>({
     resolver: zodResolver(formSchema),
     defaultValues: {
       username: "",
+      gender: "male",
+      matchPreference: "both"
     },
   });
 
-  function onSubmit(values: z.infer<typeof formSchema>) {
-    console.log(values);
+  useEffect(() => {
+    if (appUser && isOpen) {
+        form.reset({
+            username: appUser.username || "",
+            gender: appUser.preferences.gender,
+            matchPreference: appUser.preferences.matchPreference,
+        });
+    }
+  }, [appUser, isOpen, form]);
+
+  async function onSubmit(values: z.infer<typeof formSchema>) {
+    if (!user) {
+      console.error("No user signed in.");
+      return;
+    }
+    await createUser(user.uid, values.username, {
+      gender: values.gender,
+      matchPreference: values.matchPreference,
+    });
+    await updateUserStatus(user.uid, "searching");
     router.push("/queue");
+  }
+  
+  const handleStart = async () => {
+    if (appUser) {
+        await updateUserStatus(user!.uid, "searching");
+        router.push("/queue");
+    } else {
+        setIsOpen(true);
+    }
   }
 
   return (
-    <Dialog>
+    <Dialog open={isOpen} onOpenChange={setIsOpen}>
       <DialogTrigger asChild>
-        <Button size="lg" className="bg-accent hover:bg-accent/90 text-accent-foreground font-bold text-lg px-8 py-6 rounded-full shadow-lg shadow-accent/20 transition-transform transform hover:scale-105">
+        <Button onClick={handleStart} size="lg" className="bg-accent hover:bg-accent/90 text-accent-foreground font-bold text-lg px-8 py-6 rounded-full shadow-lg shadow-accent/20 transition-transform transform hover:scale-105">
           <Rocket className="mr-2 h-5 w-5" />
           Start Chat
         </Button>
@@ -67,7 +101,7 @@ export function StartChatDialog() {
         <DialogHeader>
           <DialogTitle>Ready to connect?</DialogTitle>
           <DialogDescription>
-            Just a few things before we find you a match.
+            Just a few things before we find you a match. This is only asked once.
           </DialogDescription>
         </DialogHeader>
         <Form {...form}>

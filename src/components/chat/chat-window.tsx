@@ -1,59 +1,72 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
-import { Send, ImagePlus, Paperclip } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { cn } from "@/lib/utils";
+import { useState, useRef, useEffect } from 'react';
+import { Send, ImagePlus, Paperclip, Loader2 } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { ScrollArea } from '@/components/ui/scroll-area';
+import { Avatar, AvatarFallback } from '@/components/ui/avatar';
+import { cn } from '@/lib/utils';
+import { listenForMessages, sendMessage } from '@/lib/firebase/firestore';
+import { uploadImage } from '@/lib/firebase/storage';
+import { Message } from '@/lib/types';
+import Image from 'next/image';
 
-type Message = {
-  id: number;
-  sender: "You" | "Stranger";
-  text: string;
-};
+interface ChatWindowProps {
+  chatId: string;
+  currentUserUid: string;
+}
 
-export function ChatWindow() {
-  const [messages, setMessages] = useState<Message[]>([
-    { id: 1, sender: "Stranger", text: "Hey there!" },
-    { id: 2, sender: "You", text: "Hi! How are you?" },
-    { id: 3, sender: "Stranger", text: "Doing great, thanks for asking! Nice to meet you." },
-  ]);
-  const [newMessage, setNewMessage] = useState("");
+export function ChatWindow({ chatId, currentUserUid }: ChatWindowProps) {
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [newMessage, setNewMessage] = useState('');
+  const [uploading, setUploading] = useState(false);
   const scrollAreaRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const handleSendMessage = (e: React.FormEvent) => {
+  useEffect(() => {
+    if (!chatId) return;
+    const unsubscribe = listenForMessages(chatId, (newMessages) => {
+      setMessages(newMessages as Message[]);
+    });
+    return () => unsubscribe();
+  }, [chatId]);
+
+  const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (newMessage.trim() === "") return;
+    if (newMessage.trim() === '' || !chatId) return;
 
-    const message: Message = {
-      id: Date.now(),
-      sender: "You",
-      text: newMessage,
-    };
-    setMessages((prev) => [...prev, message]);
-    setNewMessage("");
-
-    // Simulate stranger's reply
-    setTimeout(() => {
-        const reply: Message = {
-            id: Date.now() + 1,
-            sender: "Stranger",
-            text: "That's cool!"
-        }
-        setMessages(prev => [...prev, reply]);
-    }, 1500)
+    await sendMessage(chatId, currentUserUid, newMessage);
+    setNewMessage('');
+  };
+  
+  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !chatId) return;
+    
+    setUploading(true);
+    try {
+        const imagePath = `chats/${chatId}/${Date.now()}_${file.name}`;
+        const imageUrl = await uploadImage(file, imagePath);
+        await sendMessage(chatId, currentUserUid, '', imageUrl);
+    } catch (error) {
+        console.error("Error uploading image:", error);
+    } finally {
+        setUploading(false);
+        if(fileInputRef.current) fileInputRef.current.value = "";
+    }
   };
 
   useEffect(() => {
     if (scrollAreaRef.current) {
-        const viewport = scrollAreaRef.current.querySelector('div[data-radix-scroll-area-viewport]');
-        if (viewport) {
-            viewport.scrollTop = viewport.scrollHeight;
-        }
+      const viewport = scrollAreaRef.current.querySelector(
+        'div[data-radix-scroll-area-viewport]'
+      );
+      if (viewport) {
+        viewport.scrollTop = viewport.scrollHeight;
+      }
     }
-  }, [messages])
+  }, [messages]);
 
   return (
     <div className="flex h-full flex-col">
@@ -66,30 +79,35 @@ export function ChatWindow() {
             <div
               key={msg.id}
               className={cn(
-                "flex items-end gap-3",
-                msg.sender === "You" && "flex-row-reverse"
+                'flex items-end gap-3',
+                msg.senderId === currentUserUid ? 'flex-row-reverse' : 'items-start'
               )}
             >
               <Avatar className="h-8 w-8">
                 <AvatarFallback>
-                  {msg.sender === "You" ? "Y" : "S"}
+                  {msg.senderId === currentUserUid ? 'Y' : 'S'}
                 </AvatarFallback>
               </Avatar>
               <div
                 className={cn(
-                  "max-w-xs rounded-lg p-3 text-sm shadow",
-                  msg.sender === "You"
-                    ? "bg-primary text-primary-foreground"
-                    : "bg-secondary text-secondary-foreground"
+                  'max-w-xs rounded-lg p-3 text-sm shadow',
+                  msg.senderId === currentUserUid
+                    ? 'bg-primary text-primary-foreground rounded-br-none'
+                    : 'bg-secondary text-secondary-foreground rounded-bl-none'
                 )}
               >
-                <p>{msg.text}</p>
+                {msg.text && <p>{msg.text}</p>}
+                {msg.imageUrl && (
+                    <a href={msg.imageUrl} target="_blank" rel="noopener noreferrer">
+                      <Image src={msg.imageUrl} alt="chat image" width={200} height={200} className="rounded-md mt-2 max-w-full h-auto cursor-pointer" />
+                    </a>
+                )}
               </div>
             </div>
           ))}
         </div>
       </ScrollArea>
-      <footer className="border-t p-4 flex-shrink-0">
+      <footer className="border-t p-4 flex-shrink-0 bg-background/50">
         <form onSubmit={handleSendMessage} className="flex items-center gap-2">
           <Input
             type="text"
@@ -98,19 +116,17 @@ export function ChatWindow() {
             onChange={(e) => setNewMessage(e.target.value)}
             className="flex-1"
             autoComplete="off"
+            disabled={uploading}
           />
-          <Button type="submit" size="icon" aria-label="Send message">
+           <Button type="button" size="icon" aria-label="Attach image" onClick={() => fileInputRef.current?.click()} disabled={uploading}>
+              {uploading ? <Loader2 className="animate-spin" /> : <ImagePlus className="h-4 w-4" />}
+          </Button>
+          <input type="file" ref={fileInputRef} hidden accept="image/*" onChange={handleImageUpload} />
+
+          <Button type="submit" size="icon" aria-label="Send message" disabled={uploading || newMessage.trim() === ''}>
             <Send className="h-4 w-4" />
           </Button>
         </form>
-        <div className="mt-2 flex items-center gap-1">
-            <Button variant="ghost" size="icon" className="text-muted-foreground h-8 w-8" aria-label="Attach image">
-                <ImagePlus className="h-5 w-5"/>
-            </Button>
-            <Button variant="ghost" size="icon" className="text-muted-foreground h-8 w-8" aria-label="Attach file">
-                <Paperclip className="h-5 w-5"/>
-            </Button>
-        </div>
       </footer>
     </div>
   );

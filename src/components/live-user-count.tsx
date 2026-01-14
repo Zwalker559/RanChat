@@ -2,12 +2,28 @@
 
 import { useState, useEffect } from "react";
 import { Users } from "lucide-react";
+import { collection, onSnapshot, query, where, getCountFromServer } from "firebase/firestore";
+import { firestore } from "@/lib/firebase/config";
 
 export function LiveUserCount() {
   const [userCount, setUserCount] = useState<number>(0);
 
   useEffect(() => {
-    setUserCount(Math.floor(Math.random() * 1000) + 500);
+    const usersCol = collection(firestore, 'users');
+    const q = query(usersCol, where('status', '!=', 'offline'));
+    
+    // Get initial count
+    getCountFromServer(q).then(snapshot => {
+        setUserCount(snapshot.data().count);
+    });
+
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+        // This is not perfectly accurate for counts, but good enough for this app
+        // For accurate counts, you'd use a server-side counter.
+        setUserCount(snapshot.size);
+    });
+
+    return () => unsubscribe();
   }, []);
 
   return (

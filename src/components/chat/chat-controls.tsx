@@ -22,35 +22,29 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { cn } from "@/lib/utils";
-import { useRouter } from "next/navigation";
 
 interface ChatControlsProps {
   isMicOn: boolean;
   isCamOn: boolean;
   isConnecting: boolean;
+  inCall: boolean;
   onToggleMic: () => void;
   onToggleCam: () => void;
   onNext: () => void;
+  onStop: () => void;
 }
 
 export function ChatControls({
   isMicOn,
   isCamOn,
   isConnecting,
+  inCall,
   onToggleMic,
   onToggleCam,
   onNext,
+  onStop,
 }: ChatControlsProps) {
   const [showStopDialog, setShowStopDialog] = useState(false);
-  const router = useRouter();
-
-  const handleStop = () => {
-    // This will handle leaving the chat entirely and returning home.
-    // In the future, this is where account deletion would be triggered.
-    console.log("Stopping chat session...");
-    router.push("/");
-  };
-
 
   return (
     <div className="flex items-center justify-center gap-2 md:gap-4 p-2 rounded-full bg-card/60 backdrop-blur-md border border-border shadow-lg">
@@ -60,6 +54,7 @@ export function ChatControls({
         className="h-12 w-12 rounded-full"
         onClick={onToggleMic}
         aria-label={isMicOn ? "Mute microphone" : "Unmute microphone"}
+        disabled={isConnecting}
       >
         {isMicOn ? <Mic /> : <MicOff />}
       </Button>
@@ -69,23 +64,20 @@ export function ChatControls({
         className="h-12 w-12 rounded-full"
         onClick={onToggleCam}
         aria-label={isCamOn ? "Turn off camera" : "Turn on camera"}
+        disabled={isConnecting}
       >
         {isCamOn ? <Video /> : <VideoOff />}
       </Button>
 
       <Button
-        className={cn(
-            "h-14 px-6 rounded-full font-bold text-lg border-2 transition-all w-40",
-            isConnecting 
-                ? "bg-destructive border-destructive text-destructive-foreground"
-                : "bg-primary border-primary text-primary-foreground"
-        )}
+        className="h-14 px-6 rounded-full font-bold text-lg border-2 transition-all w-40 bg-primary border-primary text-primary-foreground"
         onClick={onNext}
+        disabled={isConnecting}
       >
         {isConnecting ? (
             <>
               <Loader2 className="mr-2 animate-spin" />
-              Stop
+              Finding...
             </>
         ) : (
             <>
@@ -96,13 +88,14 @@ export function ChatControls({
       </Button>
       
       <Button 
-        variant="outline"
-        className="h-12 w-12 rounded-full border-2"
+        variant="destructive"
+        className="h-12 w-12 rounded-full border-2 border-destructive"
         size="icon"
         onClick={() => setShowStopDialog(true)}
+        disabled={isConnecting}
       >
-          <PhoneOff className="h-6 w-6 text-red-500" />
-          <span className="sr-only">Stop chat</span>
+          <PhoneOff className="h-6 w-6" />
+          <span className="sr-only">End Session</span>
       </Button>
 
       <AlertDialog open={showStopDialog} onOpenChange={setShowStopDialog}>
@@ -110,13 +103,13 @@ export function ChatControls({
           <AlertDialogHeader>
             <AlertDialogTitle>End Chat Session?</AlertDialogTitle>
             <AlertDialogDescription>
-              Are you sure you want to end this chat and return to the home screen? This will delete your account and all data. This action cannot be undone.
+              Are you sure you want to end this chat and return to the home screen? Your anonymous account will be deleted.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={() => { handleStop(); setShowStopDialog(false); }} className="bg-destructive hover:bg-destructive/90">
-              End Session & Delete
+            <AlertDialogAction onClick={() => { onStop(); setShowStopDialog(false); }} className="bg-destructive hover:bg-destructive/90">
+              End Session
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
