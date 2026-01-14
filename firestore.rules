@@ -45,10 +45,15 @@ service cloud.firestore {
      * @path /users/{userId}
      */
     match /users/{userId} {
+      // A user can read their own profile, but nobody else's.
       allow get: if isOwner(userId);
+      // No one can list all users.
       allow list: if false;
+      // A user can create their own profile document.
       allow create: if isOwner(userId);
+      // A user can update their own profile (e.g., status, preferences).
       allow update: if isOwner(userId);
+      // A user can delete their own profile document.
       allow delete: if isOwner(userId);
     }
     
@@ -100,5 +105,3 @@ service cloud.firestore {
     }
   }
 }
-
-    
