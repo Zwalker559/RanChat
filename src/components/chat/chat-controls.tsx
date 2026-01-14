@@ -44,16 +44,6 @@ export function ChatControls({
 }: ChatControlsProps) {
   const [showStopDialog, setShowStopDialog] = useState(false);
 
-  const handleMainButtonClick = () => {
-    if (isConnecting) {
-      setShowStopDialog(true);
-    } else {
-      onSkip();
-    }
-  };
-  
-  const mainButtonText = isConnecting ? "Stop" : "Skip";
-
   return (
     <div className="flex items-center justify-center gap-2 md:gap-4 p-2 rounded-full bg-card/60 backdrop-blur-md border border-border shadow-lg">
       <Button
@@ -79,11 +69,11 @@ export function ChatControls({
         className={cn(
             "h-14 px-6 rounded-full font-bold text-lg border-2 transition-all w-40",
             isConnecting 
-                ? "bg-destructive border-destructive text-destructive-foreground"
+                ? "bg-muted border-muted text-muted-foreground cursor-not-allowed"
                 : "bg-primary border-primary text-primary-foreground"
         )}
-        onClick={handleMainButtonClick}
-        disabled={isConnecting && showStopDialog}
+        onClick={onSkip}
+        disabled={isConnecting}
       >
         {isConnecting ? (
             <Loader2 className="mr-2 animate-spin" />
@@ -94,7 +84,7 @@ export function ChatControls({
       </Button>
       
       <Button 
-        variant="outline"
+        variant="destructive"
         className="h-14 px-6 rounded-full font-bold text-lg border-2 transition-all"
         onClick={() => setShowStopDialog(true)}
       >
