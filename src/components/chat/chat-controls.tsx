@@ -9,6 +9,7 @@ import {
   SkipForward,
   StopCircle,
   Loader2,
+  PhoneOff
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -29,7 +30,7 @@ interface ChatControlsProps {
   isConnecting: boolean;
   onToggleMic: () => void;
   onToggleCam: () => void;
-  onSkip: () => void;
+  onNext: () => void;
   onStop: () => void;
 }
 
@@ -39,7 +40,7 @@ export function ChatControls({
   isConnecting,
   onToggleMic,
   onToggleCam,
-  onSkip,
+  onNext,
   onStop,
 }: ChatControlsProps) {
   const [showStopDialog, setShowStopDialog] = useState(false);
@@ -69,41 +70,46 @@ export function ChatControls({
         className={cn(
             "h-14 px-6 rounded-full font-bold text-lg border-2 transition-all w-40",
             isConnecting 
-                ? "bg-muted border-muted text-muted-foreground cursor-not-allowed"
+                ? "bg-destructive border-destructive text-destructive-foreground"
                 : "bg-primary border-primary text-primary-foreground"
         )}
-        onClick={onSkip}
-        disabled={isConnecting}
+        onClick={onNext}
       >
         {isConnecting ? (
-            <Loader2 className="mr-2 animate-spin" />
+            <>
+              <Loader2 className="mr-2 animate-spin" />
+              Stop
+            </>
         ) : (
-            <SkipForward className="mr-2" />
+            <>
+              <SkipForward className="mr-2" />
+              Skip
+            </>
         )}
-        {isConnecting ? "Finding..." : "Skip"}
       </Button>
       
       <Button 
-        variant="destructive"
-        className="h-14 px-6 rounded-full font-bold text-lg border-2 transition-all"
+        variant="outline"
+        className="h-12 w-12 rounded-full border-2"
+        size="icon"
         onClick={() => setShowStopDialog(true)}
       >
-          <StopCircle className="mr-2" />
-          Stop
+          <PhoneOff className="h-6 w-6 text-red-500" />
+          <span className="sr-only">Stop chat</span>
       </Button>
 
       <AlertDialog open={showStopDialog} onOpenChange={setShowStopDialog}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Are you sure?</AlertDialogTitle>
+            <AlertDialogTitle>End Chat Session?</AlertDialogTitle>
             <AlertDialogDescription>
-              This will end your current chat session and return you to the homepage.
+              Are you sure you want to end this chat and return to the home screen? This action cannot be undone.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction onClick={() => { onStop(); setShowStopDialog(false); }} className="bg-destructive hover:bg-destructive/90">
-              Stop Chat
+              End Session
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

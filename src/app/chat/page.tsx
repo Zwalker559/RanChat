@@ -25,7 +25,14 @@ export default function ChatPage() {
 
   const remoteVideo = useMemo(() => PlaceHolderImages.find(p => p.id === 'remote-video-feed'), []);
 
-  const handleSkip = () => {
+  const handleNext = () => {
+    if (isConnecting) {
+      // If we are connecting, this button acts as a 'Stop' button.
+      // For now, it just cancels the connection attempt.
+      setIsConnecting(false);
+      console.log("Search cancelled.");
+      return;
+    }
     console.log("Skipping chat...");
     setIsConnecting(true);
     setTimeout(() => {
@@ -35,7 +42,9 @@ export default function ChatPage() {
   };
 
   const handleStop = () => {
-    console.log("Stopping chat...");
+    // This will handle leaving the chat entirely and returning home.
+    // In the future, this is where account deletion would be triggered.
+    console.log("Stopping chat session...");
     router.push("/");
   };
   
@@ -98,12 +107,12 @@ export default function ChatPage() {
                 data-ai-hint={remoteVideo?.imageHint}
                 name="Stranger"
                 isConnecting={isConnecting}
-                className="w-full max-w-2xl max-h-[70vh] aspect-video"
+                className="w-full max-w-xl max-h-[60vh] aspect-video"
             />
         </div>
         <div className={cn(
             "absolute top-4 right-4 z-20 transition-all duration-300 ease-in-out",
-            isLocalVideoMinimized ? "w-28" : "w-1/5 max-w-[200px] min-w-[150px]"
+            isLocalVideoMinimized ? "w-28" : "w-1/6 max-w-[180px] min-w-[140px]"
           )}>
           <VideoPlayer
             name="You"
@@ -130,14 +139,14 @@ export default function ChatPage() {
               <span className="sr-only">{isLocalVideoMinimized ? 'Maximize' : 'Minimize'} video</span>
             </Button>
         </div>
-        <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-10 w-full max-w-sm px-4">
+        <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-10 w-full max-w-md px-4">
           <ChatControls
             isMicOn={isMicOn}
             isCamOn={isCamOn}
             isConnecting={isConnecting}
             onToggleMic={() => setIsMicOn((prev) => !prev)}
             onToggleCam={() => setIsCamOn((prev) => !prev)}
-            onSkip={handleSkip}
+            onNext={handleNext}
             onStop={handleStop}
           />
         </div>
