@@ -11,7 +11,7 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Minus, Plus } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { findPartner, createOffer, listenForOffer, createAnswer, listenForAnswer, addIceCandidate, listenForIceCandidates, endChat, updateUserStatus, getUser, listenForPartner, getChatDoc } from '@/lib/firebase/firestore';
+import { findPartner, createOffer, listenForOffer, createAnswer, listenForAnswer, addIceCandidate, listenForIceCandidates, endChat, updateUserStatus, getUser, listenForPartner, getChatDoc, deleteUser as deleteFirestoreUser } from '@/lib/firebase/firestore';
 import { Unsubscribe, onSnapshot, doc } from 'firebase/firestore';
 import { firestore } from '@/lib/firebase/config';
 import { deleteUser as deleteAuthUser } from 'firebase/auth';
@@ -46,6 +46,7 @@ function ChatPageContent() {
   const localStreamRef = useRef<MediaStream | null>(null);
   
   const firestoreUnsubscribers = useRef<Unsubscribe[]>([]);
+  const isUnloading = useRef(false);
 
   const cleanup = useCallback(async (shouldEndChat = true) => {
     console.log("Cleaning up chat session...");
@@ -196,26 +197,30 @@ function ChatPageContent() {
   }, [user, appUser, cleanup, router, startWebRTC, startMedia]);
 
   const handleStop = async () => {
+    isUnloading.current = true;
     setIsConnecting(false);
     await cleanup();
     if (user) {
       try {
+        // We need to delete the firestore doc first due to security rules
+        await deleteFirestoreUser(user.uid);
         await deleteAuthUser(user);
-        console.log("Anonymous user deleted.");
+        console.log("Anonymous user and data deleted.");
       } catch (error) {
         console.error("Error deleting anonymous user:", error);
       }
     }
     router.push("/");
   };
+  
 
   // Initial media setup & cleanup
   useEffect(() => {
     startMedia();
-    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
-      if (user) {
-        // This is not guaranteed to run, but it's the best we can do.
-        deleteAuthUser(user).catch(e => console.error("Could not delete user on unload", e));
+    const handleBeforeUnload = async (event: BeforeUnloadEvent) => {
+      if (user && !isUnloading.current) {
+        await deleteFirestoreUser(user.uid);
+        await deleteAuthUser(user);
       }
     };
   
@@ -223,7 +228,9 @@ function ChatPageContent() {
 
     return () => {
         window.removeEventListener('beforeunload', handleBeforeUnload);
-        cleanup(true);
+        if(!isUnloading.current) {
+            cleanup(true);
+        }
     };
   }, [startMedia, cleanup, user]);
   

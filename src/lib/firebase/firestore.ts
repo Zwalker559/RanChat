@@ -45,6 +45,15 @@ export const getUser = async (uid: string): Promise<User | null> => {
   return userSnap.exists() ? (userSnap.data() as User) : null;
 };
 
+export const deleteUser = async (uid: string) => {
+    if (!uid) return;
+    const userRef = doc(firestore, 'users', uid);
+    await deleteDoc(userRef);
+    const activeUserRef = doc(firestore, 'active_users', uid);
+    await deleteDoc(activeUserRef);
+};
+
+
 export const updateUserStatus = async (uid: string, status: User['status']) => {
   if (!uid) return;
   const userRef = doc(firestore, 'users', uid);
