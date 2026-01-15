@@ -15,11 +15,11 @@ export function VideoPlayer({ src, name, isMuted, isCamOff, isConnecting, classN
   return (
     <div className={cn("relative aspect-video w-full overflow-hidden rounded-lg bg-secondary shadow-lg", className)} {...props}>
       {showOverlay ? (
-        <div className="flex h-full w-full flex-col items-center justify-center bg-secondary text-muted-foreground">
+        <div className="flex h-full w-full flex-col items-center justify-center bg-secondary text-muted-foreground p-4">
           {isConnecting ? (
             <>
               <Loader2 className="h-8 w-8 md:h-12 md:w-12 animate-spin text-accent" />
-              <p className="mt-2 md:mt-4 text-sm md:text-base">Finding next match...</p>
+              <p className="mt-2 md:mt-4 text-sm md:text-base text-center">Finding next match...</p>
             </>
           ) : isCamOff ? (
             <VideoOff className="h-8 w-8 md:h-12 md:w-12" />
@@ -44,3 +44,5 @@ export function VideoPlayer({ src, name, isMuted, isCamOff, isConnecting, classN
     </div>
   );
 }
+
+    

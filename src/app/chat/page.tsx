@@ -9,7 +9,7 @@ import { ChatWindow } from '@/components/chat/chat-window';
 import { ChatControls } from '@/components/chat/chat-controls';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
-import { Minus, Plus } from 'lucide-react';
+import { Minus, Plus, Maximize, Minimize } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { findPartner, createOffer, listenForOffer, createAnswer, listenForAnswer, addIceCandidate, listenForIceCandidates, endChat, updateUserStatus, getUser, listenForPartner, getChatDoc, deleteUser as deleteFirestoreUser } from '@/lib/firebase/firestore';
 import { Unsubscribe, onSnapshot, doc } from 'firebase/firestore';
@@ -221,7 +221,7 @@ function ChatPageContent() {
       // isUnloading.current is used to avoid double execution if stop is clicked
       if (user && !isUnloading.current) {
          try {
-           await endChat(chatId!, user.uid);
+           if (chatId) await endChat(chatId, user.uid);
            await deleteFirestoreUser(user.uid);
            await deleteAuthUser(user);
            console.log("Anonymous user and data deleted on unload.");
@@ -285,47 +285,56 @@ function ChatPageContent() {
 
   return (
     <main className="grid h-screen max-h-screen grid-cols-1 lg:grid-cols-[1fr_400px] overflow-hidden">
-      <div className="relative flex flex-col items-center justify-center p-4 bg-black/90">
-        <div className="w-full h-full flex items-center justify-center max-w-4xl max-h-[calc(100vh-120px)] aspect-video">
+      <div className="relative flex flex-col items-center justify-between p-4 bg-black/90 h-full">
+        <div className={cn(
+          "grid w-full flex-1 gap-4 transition-all duration-300",
+          isLocalVideoMinimized ? "grid-rows-1" : "grid-rows-[1fr_auto] md:grid-rows-1 md:grid-cols-[1fr_300px]"
+        )}>
+          <div className="relative group/videoplayer w-full h-full min-h-0">
             <VideoPlayer
                 name={partnerUsername}
                 isConnecting={isConnecting}
+                className="h-full"
             >
               <video ref={remoteVideoRef} className="w-full h-full object-cover" autoPlay playsInline />
             </VideoPlayer>
-        </div>
-        <div className={cn(
-            "absolute top-4 right-4 z-20 transition-all duration-300 ease-in-out",
-            isLocalVideoMinimized ? "w-24" : "w-48"
-          )}>
-          <div className="relative group/videoplayer">
-            <VideoPlayer
-              name={appUser?.username || "You"}
-              isMuted={!isMicOn}
-              isCamOff={!isCamOn}
-            >
-              <video ref={localVideoRef} className="w-full h-full object-cover" autoPlay muted playsInline />
-              { !hasCameraPermission && isCamOn && (
-                  <Alert variant="destructive" className="absolute bottom-2 left-2 right-2 p-2">
-                    <AlertTitle className="text-xs">Camera Required</AlertTitle>
-                    <AlertDescription className="text-xs">
-                      Please allow camera access.
-                    </AlertDescription>
-                  </Alert>
-              )}
-            </VideoPlayer>
-            <Button 
-                size="icon" 
-                variant="ghost" 
-                className="absolute top-1 right-1 z-30 h-6 w-6 rounded-full bg-black/30 text-white hover:bg-black/50 opacity-0 group-hover/videoplayer:opacity-100 transition-opacity"
-                onClick={() => setIsLocalVideoMinimized(prev => !prev)}
-              >
-                {isLocalVideoMinimized ? <Plus size={14} /> : <Minus size={14} />}
-                <span className="sr-only">{isLocalVideoMinimized ? 'Maximize' : 'Minimize'} video</span>
-              </Button>
+          </div>
+          
+          <div className={cn(
+              "relative group/videoplayer w-full min-h-0 transition-all duration-300",
+              isLocalVideoMinimized ? "h-10" : "h-full"
+            )}>
+              <div className="relative w-full h-full">
+                <VideoPlayer
+                  name={appUser?.username || "You"}
+                  isMuted={!isMicOn}
+                  isCamOff={!isCamOn}
+                  className="h-full"
+                >
+                  <video ref={localVideoRef} className="w-full h-full object-cover" autoPlay muted playsInline />
+                  { !hasCameraPermission && isCamOn && (
+                      <Alert variant="destructive" className="absolute bottom-2 left-2 right-2 p-2">
+                        <AlertTitle className="text-xs">Camera Required</AlertTitle>
+                        <AlertDescription className="text-xs">
+                          Please allow camera access.
+                        </AlertDescription>
+                      </Alert>
+                  )}
+                </VideoPlayer>
+                <Button 
+                    size="icon" 
+                    variant="ghost" 
+                    className="absolute top-1 right-1 z-30 h-6 w-6 rounded-full bg-black/30 text-white hover:bg-black/50 opacity-0 group-hover/videoplayer:opacity-100 transition-opacity"
+                    onClick={() => setIsLocalVideoMinimized(prev => !prev)}
+                  >
+                    {isLocalVideoMinimized ? <Maximize size={14} /> : <Minimize size={14} />}
+                    <span className="sr-only">{isLocalVideoMinimized ? 'Maximize' : 'Minimize'} video</span>
+                  </Button>
+              </div>
           </div>
         </div>
-        <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-10 w-full max-w-md px-4">
+
+        <div className="w-full max-w-md pt-4">
           <ChatControls
             isMicOn={isMicOn}
             isCamOn={isCamOn}
