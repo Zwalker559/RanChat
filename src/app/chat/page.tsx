@@ -180,36 +180,39 @@ function ChatPageContent() {
     router.push('/queue');
   }, [cleanup, router]);
 
+  const fullUserDelete = useCallback(async () => {
+    if (user && auth?.currentUser) {
+        try {
+            await deleteFirestoreUser(user.uid);
+            // This is the key part: deleting the user from Firebase Auth
+            await deleteAuthUser(auth.currentUser);
+            console.log("Anonymous user account and data deleted successfully.");
+        } catch (error) {
+            console.error("Error deleting anonymous user:", error);
+            toast({
+                variant: "destructive",
+                title: "Cleanup Error",
+                description: "Could not fully delete user account."
+            });
+        }
+    }
+  }, [user, auth, toast]);
+
   const handleStop = async () => {
     isUnloading.current = true;
     await cleanup();
-    if (user && auth?.currentUser) {
-      try {
-        await deleteFirestoreUser(user.uid);
-        await deleteAuthUser(auth.currentUser);
-        console.log("Anonymous user and data deleted successfully.");
-      } catch (error) {
-        console.error("Error deleting anonymous user during stop:", error);
-      }
-    }
+    await fullUserDelete();
     router.push("/");
   };
   
   useEffect(() => {
-    const handleUnload = async (e: BeforeUnloadEvent) => {
+    const handleUnload = (e: BeforeUnloadEvent) => {
+      // This is a last-resort attempt. Modern browsers limit what can be done here.
+      // We can't use async operations. The most reliable cleanup is user-initiated (Stop button).
       if (user && auth?.currentUser && !isUnloading.current) {
-        isUnloading.current = true; // prevent re-entry
-        
-        // This makes the operation synchronous for beforeunload
-        // but it's not guaranteed to complete.
-        // Modern browsers are very restrictive here.
-        if (chatId) await endChat(chatId, user.uid);
-        await deleteFirestoreUser(user.uid);
-        await deleteAuthUser(auth.currentUser);
-
-        // Required for some older browsers
-        e.preventDefault(); 
-        e.returnValue = '';
+          // This will not reliably work, but it's the best we can do in `beforeunload`.
+          // The primary cleanup should happen via the "Stop" button.
+          navigator.sendBeacon(`/api/cleanup?uid=${user.uid}`);
       }
     };
   
@@ -217,11 +220,12 @@ function ChatPageContent() {
 
     return () => {
         window.removeEventListener('beforeunload', handleUnload);
-        if(!isUnloading.current) {
+        // This cleanup runs when the component unmounts, e.g., navigating away
+        if (!isUnloading.current) {
             cleanup(true);
         }
     };
-  }, [cleanup, user, chatId, auth]);
+  }, [cleanup, user, auth]);
   
   useEffect(() => {
     const initializeChat = async () => {
@@ -238,11 +242,10 @@ function ChatPageContent() {
                 await updateUserStatus(user.uid, 'in-chat');
                 startWebRTC(urlIsCaller, urlChatId, urlPartnerUid);
             } else {
-                // If chat doc doesn't exist, something went wrong, go back to queue
+                toast({ title: "Chat not found", description: "The chat you were looking for doesn't exist. Finding a new partner." });
                 handleNext();
             }
         } else {
-            // If no chat details in URL, redirect to queue
             router.push('/queue');
         }
     };
@@ -253,7 +256,8 @@ function ChatPageContent() {
             else router.push('/'); // No camera access, go home
         });
     } else if(!user) {
-        router.push('/'); // Not signed in
+        // If there's no user, auth is likely still loading or failed.
+        // AuthProvider handles redirecting, so we can just wait.
     }
 
   }, [user, appUser, searchParams, startMedia, router, startWebRTC, handleNext, toast]);

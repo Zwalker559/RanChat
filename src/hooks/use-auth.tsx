@@ -23,8 +23,25 @@ export const AuthProvider = ({children}: {children: ReactNode}) => {
     const [authError, setAuthError] = useState<string|null>(null);
 
     useEffect(() => {
-        const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+        const performSignIn = async () => {
+            try {
+                // Attempt to sign in anonymously
+                await signInAnonymously(auth);
+            } catch (error) {
+                const caughtError = error as AuthError;
+                console.error("Anonymous Sign-In Error:", caughtError.code, caughtError.message);
+                if (caughtError.code === 'auth/admin-restricted-operation' || caughtError.code === 'auth/operation-not-allowed') {
+                    setAuthError("Anonymous sign-in is not enabled for this Firebase project.");
+                } else {
+                     setAuthError("An unexpected authentication error occurred. Please try again.");
+                }
+                setLoading(false);
+            }
+        };
+
+        const unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
             if (firebaseUser) {
+                // User is signed in
                 setUser(firebaseUser);
                 const userRef = doc(firestore, 'users', firebaseUser.uid);
                 const unsubUser = onSnapshot(userRef, (doc) => {
@@ -40,21 +57,11 @@ export const AuthProvider = ({children}: {children: ReactNode}) => {
                   setLoading(false);
                 });
                 return () => unsubUser();
-
             } else {
-                try {
-                    const userCredential = await signInAnonymously(auth);
-                    setUser(userCredential.user);
-                } catch (error) {
-                    const caughtError = error as AuthError;
-                    console.error("Authentication Error:", caughtError.code, caughtError.message);
-                    if (caughtError.code === 'auth/admin-restricted-operation' || caughtError.code === 'auth/operation-not-allowed') {
-                        setAuthError("Anonymous sign-in is not enabled for this Firebase project.");
-                    } else {
-                         setAuthError("An unexpected authentication error occurred. Please try again.");
-                    }
-                    setLoading(false);
-                }
+                // User is signed out, attempt to sign them in
+                setUser(null);
+                setAppUser(null);
+                performSignIn();
             }
         });
 

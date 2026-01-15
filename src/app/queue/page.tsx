@@ -1,10 +1,11 @@
 "use client";
 import {useRouter} from 'next/navigation';
-import {useEffect} from 'react';
+import {useEffect, useCallback} from 'react';
 import {useAuth} from '@/hooks/use-auth';
 import {listenForPartner, updateUserStatus, deleteUser as deleteFirestoreUser, findPartner } from '@/lib/firebase/firestore';
 import { deleteUser as deleteAuthUser } from 'firebase/auth';
 import { Button } from '@/components/ui/button';
+import { useToast } from '@/hooks/use-toast';
 
 const Spinner = () => (
   <div className="relative h-20 w-20">
@@ -20,10 +21,25 @@ const Spinner = () => (
 export default function QueuePage() {
   const router = useRouter();
   const {user, appUser, auth} = useAuth();
+  const { toast } = useToast();
+
+  const handleCancel = useCallback(async () => {
+    if (user && auth?.currentUser) {
+        try {
+            await deleteFirestoreUser(user.uid);
+            await deleteAuthUser(auth.currentUser);
+            toast({ title: "Account Deleted", description: "Your anonymous account has been successfully deleted." });
+        } catch (error) {
+            console.error("Error deleting user during cancel:", error);
+            toast({ variant: "destructive", title: "Error", description: "Could not delete your account." });
+        }
+    }
+    router.push('/');
+  }, [user, auth, router, toast]);
 
   useEffect(() => {
     if (!user || !appUser) {
-        if (!user) router.push('/');
+        if (!user && !auth?.currentUser) router.push('/');
         return;
     };
     
@@ -43,23 +59,16 @@ export default function QueuePage() {
         }
     });
 
+    // Cleanup when the user navigates away from this page
     return () => {
       unsubscribe();
+      // If user is still in searching state and navigates away (but doesn't cancel),
+      // update their status so they are not stuck in the queue.
+      if (user) {
+        updateUserStatus(user.uid, 'online');
+      }
     };
-  }, [user, appUser, router]);
-
-  const handleCancel = async () => {
-    if (user && auth?.currentUser) {
-        try {
-            await deleteFirestoreUser(user.uid);
-            await deleteAuthUser(auth.currentUser);
-            console.log("Anonymous user and data deleted successfully.");
-        } catch (error) {
-            console.error("Error deleting user during cancel:", error);
-        }
-    }
-    router.push('/');
-  }
+  }, [user, appUser, router, auth]);
 
   return (
     <div className="flex min-h-screen flex-col items-center justify-center gap-8">
