@@ -116,6 +116,7 @@ function ChatPageContent() {
 
     if (isCaller) {
         const offerDescription = await pc.current.createOffer();
+        if (pc.current.localDescription) return;
         await pc.current.setLocalDescription(offerDescription);
         await createOffer(currentChatId, user.uid, { type: offerDescription.type, sdp: offerDescription.sdp });
         
@@ -131,6 +132,7 @@ function ChatPageContent() {
             if (pc.current && !pc.current.remoteDescription) {
                 await pc.current.setRemoteDescription(new RTCSessionDescription(offer));
                 const answerDescription = await pc.current.createAnswer();
+                if (pc.current.localDescription) return;
                 await pc.current.setLocalDescription(answerDescription);
                 await createAnswer(currentChatId, user.uid, { type: answerDescription.type, sdp: answerDescription.sdp });
             }
