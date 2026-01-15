@@ -3,7 +3,7 @@
 import {useRouter} from 'next/navigation';
 import {useEffect, useCallback, useRef} from 'react';
 import {useAuth} from '@/hooks/use-auth';
-import {listenForPartner, updateUserStatus, deleteUser as deleteFirestoreUser, findPartner, getUser, addUserToQueue } from '@/lib/firebase/firestore';
+import {listenForPartner, updateUserStatus, deleteUser as deleteFirestoreUser, findPartner, getUser } from '@/lib/firebase/firestore';
 import { deleteUser as deleteAuthUser } from 'firebase/auth';
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/hooks/use-toast';
@@ -27,7 +27,9 @@ export default function QueuePage() {
   const matchFound = useRef(false);
 
   const handleCancel = useCallback(async () => {
+    if (isCancelling.current) return;
     isCancelling.current = true;
+    
     if (user && auth?.currentUser) {
         try {
             await deleteFirestoreUser(user.uid);
@@ -51,23 +53,14 @@ export default function QueuePage() {
     
     matchFound.current = false;
     isCancelling.current = false;
-
-    const startSearch = async () => {
-        await updateUserStatus(user.uid, 'searching');
-        await addUserToQueue(user.uid, appUser);
-
-        // Give listener a moment to find an incoming match
-        await new Promise(resolve => setTimeout(resolve, 2000));
-        if (matchFound.current) return;
-
-        const match = await findPartner(user.uid, appUser);
-        if (match) {
+    
+    // Attempt to find a partner immediately on entering the queue
+    findPartner(user.uid, appUser).then(match => {
+        if (match && !matchFound.current) {
             matchFound.current = true;
             router.push(`/chat?chatId=${match.chatId}&partnerUid=${match.partnerUid}&caller=true`);
         }
-    }
-    
-    startSearch();
+    });
 
     const unsubscribePartnerListener = listenForPartner(user.uid, (chatId, partnerUid) => {
         if (chatId && partnerUid && !matchFound.current) {

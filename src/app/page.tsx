@@ -6,7 +6,7 @@ import { useForm } from "react-hook-form";
 import * as z from "zod";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/hooks/use-auth";
-import { createUser, isUsernameTaken } from "@/lib/firebase/firestore";
+import { createUser, isUsernameTaken, addUserToQueue, updateUserStatus } from "@/lib/firebase/firestore";
 import { Button } from "@/components/ui/button";
 import {
   Form,
@@ -23,7 +23,6 @@ import { Mic, MicOff, Rocket, Video, VideoOff } from "lucide-react";
 import { Label } from "@/components/ui/label";
 import { LiveUserCount } from "@/components/live-user-count";
 import { useState, useEffect } from "react";
-import { cn } from "@/lib/utils";
 import { Switch } from "@/components/ui/switch";
 
 const formSchema = z.object({
@@ -43,7 +42,7 @@ const formSchema = z.object({
 
 export default function Home() {
   const router = useRouter();
-  const { user } = useAuth();
+  const { user, appUser } = useAuth();
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isCamOn, setIsCamOn] = useState(true);
   const [isMicOn, setIsMicOn] = useState(true);
@@ -69,11 +68,24 @@ export default function Home() {
   const form = useForm<z.infer<typeof formSchema>>({
     resolver: zodResolver(formSchema),
     defaultValues: {
-      username: "",
-      gender: "male",
-      matchPreference: "both"
+      username: appUser?.username || "",
+      gender: appUser?.gender || "male",
+      matchPreference: appUser?.matchPreference || "both"
     },
   });
+  
+   useEffect(() => {
+    if (appUser) {
+      form.reset({
+        username: appUser.username,
+        gender: appUser.gender,
+        matchPreference: appUser.matchPreference,
+      });
+      setIsCamOn(appUser.isCamOn);
+      setIsMicOn(appUser.isMicOn);
+    }
+  }, [appUser, form]);
+
 
   async function onSubmit(values: z.infer<typeof formSchema>) {
     if (!user) {
@@ -84,20 +96,34 @@ export default function Home() {
 
     setIsSubmitting(true);
 
-    const usernameExists = await isUsernameTaken(values.username);
-    if (usernameExists) {
-        form.setError("username", { type: "manual", message: "This username is already taken." });
-        setIsSubmitting(false);
-        return;
+    if (values.username !== appUser?.username) {
+        const usernameExists = await isUsernameTaken(values.username);
+        if (usernameExists) {
+            form.setError("username", { type: "manual", message: "This username is already taken." });
+            setIsSubmitting(false);
+            return;
+        }
     }
     
-    await createUser(user.uid, {
+    const userData = {
       username: values.username,
       gender: values.gender,
       matchPreference: values.matchPreference,
       isCamOn: isCamOn,
       isMicOn: isMicOn,
+    };
+    
+    await createUser(user.uid, userData);
+    
+    // Now that user is created/updated, add to queue
+    await updateUserStatus(user.uid, 'searching');
+    await addUserToQueue(user.uid, {
+        uid: user.uid,
+        status: 'searching',
+        createdAt: new Date(), // This will be replaced by server timestamp
+        ...userData
     });
+
 
     router.push("/queue");
   }
@@ -143,7 +169,7 @@ export default function Home() {
                       <FormControl>
                         <RadioGroup
                           onValueChange={field.onChange}
-                          defaultValue={field.value}
+                          value={field.value}
                           className="flex space-x-4"
                         >
                           <FormItem className="flex items-center space-x-2 space-y-0">
@@ -173,7 +199,7 @@ export default function Home() {
                       <FormControl>
                         <RadioGroup
                           onValueChange={field.onChange}
-                          defaultValue={field.value}
+                          value={field.value}
                           className="flex space-x-4"
                         >
                           <FormItem className="flex items-center space-x-2 space-y-0">
@@ -236,7 +262,7 @@ export default function Home() {
                     </FormItem>
                 </div>
 
-                <Button type="submit" disabled={isSubmitting} className="w-full bg-accent hover:bg-accent/90 text-accent-foreground font-bold text-lg px-8 py-6 rounded-full shadow-lg shadow-accent/20 transition-transform transform hover:scale-105">
+                <Button type="submit" disabled={isSubmitting || !user} className="w-full bg-accent hover:bg-accent/90 text-accent-foreground font-bold text-lg px-8 py-6 rounded-full shadow-lg shadow-accent/20 transition-transform transform hover:scale-105">
                   <Rocket className="mr-2 h-5 w-5" />
                   {isSubmitting ? "Starting..." : "Start Chat"}
                 </Button>
