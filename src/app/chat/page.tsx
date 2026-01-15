@@ -11,7 +11,7 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Maximize, Minimize } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { findPartner, createOffer, listenForOffer, createAnswer, listenForAnswer, addIceCandidate, listenForIceCandidates, endChat, updateUserStatus, getUser, getChatDoc, deleteUser as deleteFirestoreUser } from '@/lib/firebase/firestore';
+import { createOffer, listenForOffer, createAnswer, listenForAnswer, addIceCandidate, listenForIceCandidates, endChat, updateUserStatus, getUser, getChatDoc, deleteUser as deleteFirestoreUser } from '@/lib/firebase/firestore';
 import { Unsubscribe, onSnapshot, doc } from 'firebase/firestore';
 import { firestore } from '@/lib/firebase/config';
 import { deleteUser as deleteAuthUser } from 'firebase/auth';
@@ -71,7 +71,6 @@ function ChatPageContent() {
     if (chatId && user && shouldEndChat) {
       await endChat(chatId, user.uid);
     } else if (user) {
-        // If not in a chat, but cleaning up, ensure status is correct
         await updateUserStatus(user.uid, 'online');
     }
 
@@ -177,29 +176,9 @@ function ChatPageContent() {
 
   const handleNext = useCallback(async (isAutoNext = false) => {
     setIsConnecting(true);
-    
     await cleanup();
-    
-    const stream = await startMedia();
-    if (!stream) return;
-
-    if (user && appUser) {
-        try {
-            await updateUserStatus(user.uid, 'searching');
-            const match = await findPartner(user.uid, appUser.preferences);
-            if (match) {
-                await updateUserStatus(user.uid, 'in-chat');
-                startWebRTC(true, match.chatId, match.partnerUid);
-            } else {
-                router.push('/queue');
-            }
-        } catch(error) {
-            console.error("Error finding partner:", error);
-            toast({variant: 'destructive', title: "Error finding partner", description: "Please try again."});
-            setIsConnecting(false);
-        }
-    }
-  }, [user, appUser, cleanup, router, startWebRTC, startMedia, toast]);
+    router.push('/queue');
+  }, [cleanup, router]);
 
   const handleStop = async () => {
     isUnloading.current = true;
@@ -217,15 +196,20 @@ function ChatPageContent() {
   };
   
   useEffect(() => {
-    const handleUnload = async () => {
+    const handleUnload = async (e: BeforeUnloadEvent) => {
       if (user && auth?.currentUser && !isUnloading.current) {
-        try {
-          if (chatId) await endChat(chatId, user.uid);
-          await deleteFirestoreUser(user.uid);
-          await deleteAuthUser(auth.currentUser);
-        } catch (error) {
-          console.error("Error during unload cleanup:", error);
-        }
+        isUnloading.current = true; // prevent re-entry
+        
+        // This makes the operation synchronous for beforeunload
+        // but it's not guaranteed to complete.
+        // Modern browsers are very restrictive here.
+        if (chatId) await endChat(chatId, user.uid);
+        await deleteFirestoreUser(user.uid);
+        await deleteAuthUser(auth.currentUser);
+
+        // Required for some older browsers
+        e.preventDefault(); 
+        e.returnValue = '';
       }
     };
   
@@ -244,33 +228,35 @@ function ChatPageContent() {
         if (!user || !appUser || !localStreamRef.current) return;
 
         const urlChatId = searchParams.get('chatId');
-        
-        if (urlChatId) {
+        const urlPartnerUid = searchParams.get('partnerUid');
+        const urlIsCaller = searchParams.get('caller') === 'true';
+
+        if (urlChatId && urlPartnerUid) {
             setChatId(urlChatId);
             const chatDoc = await getChatDoc(urlChatId);
             if (chatDoc) {
-                const partner = chatDoc.participants.find(p => p !== user.uid);
-                if (partner) {
-                    await updateUserStatus(user.uid, 'in-chat');
-                    startWebRTC(false, urlChatId, partner);
-                } else {
-                    toast({variant: 'destructive', title: "Chat is invalid"});
-                    router.push('/');
-                }
+                await updateUserStatus(user.uid, 'in-chat');
+                startWebRTC(urlIsCaller, urlChatId, urlPartnerUid);
             } else {
+                // If chat doc doesn't exist, something went wrong, go back to queue
                 handleNext();
             }
-        } else if (!chatId) {
-            handleNext();
+        } else {
+            // If no chat details in URL, redirect to queue
+            router.push('/queue');
         }
     };
 
-    if (user && appUser && hasCameraPermission) {
+    if (user && appUser) {
         startMedia().then(stream => {
             if (stream) initializeChat();
+            else router.push('/'); // No camera access, go home
         });
+    } else if(!user) {
+        router.push('/'); // Not signed in
     }
-  }, [user, appUser, searchParams, hasCameraPermission, startMedia, router, startWebRTC, handleNext, toast, chatId]);
+
+  }, [user, appUser, searchParams, startMedia, router, startWebRTC, handleNext, toast]);
 
   return (
     <main className="grid h-screen max-h-screen grid-cols-1 lg:grid-cols-[1fr_400px] overflow-hidden">
@@ -282,7 +268,7 @@ function ChatPageContent() {
           <div className="relative group/videoplayer w-full h-full min-h-0">
             <VideoPlayer
                 name={partnerUsername}
-                isConnecting={isConnecting}
+                isConnecting={isConnecting || !partnerUid}
                 className="h-full"
             >
               <video ref={remoteVideoRef} className="w-full h-full object-cover" autoPlay playsInline />
@@ -364,7 +350,7 @@ function ChatPageContent() {
 
 export default function ChatPage() {
     return (
-        <Suspense fallback={<div>Loading...</div>}>
+        <Suspense fallback={<div className="flex h-screen w-full items-center justify-center"><p>Loading Chat...</p></div>}>
             <ChatPageContent />
         </Suspense>
     )

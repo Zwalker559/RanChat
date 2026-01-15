@@ -39,6 +39,13 @@ export const createUser = async (
   return newUser;
 };
 
+export const isUsernameTaken = async (username: string): Promise<boolean> => {
+  const usersRef = collection(firestore, 'users');
+  const q = query(usersRef, where("username", "==", username), limit(1));
+  const querySnapshot = await getDocs(q);
+  return !querySnapshot.empty;
+};
+
 export const getUser = async (uid: string): Promise<User | null> => {
   const userRef = doc(firestore, 'users', uid);
   const userSnap = await getDoc(userRef);
@@ -53,7 +60,10 @@ export const deleteUser = async (uid: string) => {
       const activeUserRef = doc(firestore, 'active_users', uid);
       await deleteDoc(activeUserRef);
       const queueRef = doc(firestore, 'queue', uid);
-      await deleteDoc(queueRef);
+      const queueSnap = await getDoc(queueRef);
+      if (queueSnap.exists()) {
+        await deleteDoc(queueRef);
+      }
     } catch(e) {
       console.error("Error deleting user from firestore", e);
     }

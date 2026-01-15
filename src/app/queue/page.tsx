@@ -2,7 +2,7 @@
 import {useRouter} from 'next/navigation';
 import {useEffect} from 'react';
 import {useAuth} from '@/hooks/use-auth';
-import {listenForPartner, updateUserStatus, deleteUser as deleteFirestoreUser } from '@/lib/firebase/firestore';
+import {listenForPartner, updateUserStatus, deleteUser as deleteFirestoreUser, findPartner } from '@/lib/firebase/firestore';
 import { deleteUser as deleteAuthUser } from 'firebase/auth';
 import { Button } from '@/components/ui/button';
 
@@ -23,19 +23,23 @@ export default function QueuePage() {
 
   useEffect(() => {
     if (!user || !appUser) {
-        // If user data is not loaded, maybe redirect or wait.
-        // If no user, AuthProvider should handle it.
         if (!user) router.push('/');
         return;
     };
     
     updateUserStatus(user.uid, 'searching');
+    
+    // Attempt to find a partner immediately
+    findPartner(user.uid, appUser.preferences).then(match => {
+        if (match) {
+            router.push(`/chat?chatId=${match.chatId}&partnerUid=${match.partnerUid}&caller=true`);
+        }
+    });
 
     const unsubscribe = listenForPartner(user.uid, (chatId, partnerUid) => {
-        // When a partner is found, the listener in firestore.ts will call this.
-        unsubscribe(); // Stop listening
+        unsubscribe(); 
         if (chatId && partnerUid) {
-            router.push(`/chat?chatId=${chatId}`);
+            router.push(`/chat?chatId=${chatId}&partnerUid=${partnerUid}&caller=false`);
         }
     });
 
@@ -47,9 +51,9 @@ export default function QueuePage() {
   const handleCancel = async () => {
     if (user && auth?.currentUser) {
         try {
-            await updateUserStatus(user.uid, 'offline');
             await deleteFirestoreUser(user.uid);
             await deleteAuthUser(auth.currentUser);
+            console.log("Anonymous user and data deleted successfully.");
         } catch (error) {
             console.error("Error deleting user during cancel:", error);
         }
