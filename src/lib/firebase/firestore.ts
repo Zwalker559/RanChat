@@ -33,7 +33,7 @@ export const createUser = async (
     status: 'online',
     createdAt: serverTimestamp(),
   };
-  await setDoc(userRef, newUser, { merge: true });
+  await setDoc(userRef, newUser);
   // Also create a document in active_users to show presence
   await setDoc(doc(firestore, 'active_users', uid), { uid, lastSeen: serverTimestamp() });
   return newUser;
@@ -47,10 +47,14 @@ export const getUser = async (uid: string): Promise<User | null> => {
 
 export const deleteUser = async (uid: string) => {
     if (!uid) return;
-    const userRef = doc(firestore, 'users', uid);
-    await deleteDoc(userRef);
-    const activeUserRef = doc(firestore, 'active_users', uid);
-    await deleteDoc(activeUserRef);
+    try {
+      const userRef = doc(firestore, 'users', uid);
+      await deleteDoc(userRef);
+      const activeUserRef = doc(firestore, 'active_users', uid);
+      await deleteDoc(activeUserRef);
+    } catch(e) {
+      console.error("Error deleting user from firestore", e);
+    }
 };
 
 
@@ -59,7 +63,7 @@ export const updateUserStatus = async (uid: string, status: User['status']) => {
   const userRef = doc(firestore, 'users', uid);
   const activeUserRef = doc(firestore, 'active_users', uid);
   try {
-    if (status === 'offline') {
+    if (status === 'offline' || status === 'deleted') {
       await deleteDoc(activeUserRef);
     } else {
       await setDoc(activeUserRef, { uid, lastSeen: serverTimestamp() }, { merge: true });
@@ -116,7 +120,7 @@ export const findPartner = async (
       uid,
       preferences,
       timestamp: serverTimestamp(),
-    });
+    }, { merge: true });
     return null;
   } else {
     // Match found!
@@ -306,3 +310,5 @@ export const endChat = async (chatId: string, myUid: string) => {
         await updateUserStatus(myUid, 'online');
     }
 };
+
+    

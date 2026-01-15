@@ -197,17 +197,15 @@ function ChatPageContent() {
   }, [user, appUser, cleanup, router, startWebRTC, startMedia]);
 
   const handleStop = async () => {
-    isUnloading.current = true;
-    setIsConnecting(false);
+    isUnloading.current = true; // Prevents double cleanup in unload handler
     await cleanup();
     if (user) {
       try {
-        // We need to delete the firestore doc first due to security rules
         await deleteFirestoreUser(user.uid);
         await deleteAuthUser(user);
-        console.log("Anonymous user and data deleted.");
+        console.log("Anonymous user and data deleted successfully.");
       } catch (error) {
-        console.error("Error deleting anonymous user:", error);
+        console.error("Error deleting anonymous user during stop:", error);
       }
     }
     router.push("/");
@@ -217,10 +215,19 @@ function ChatPageContent() {
   // Initial media setup & cleanup
   useEffect(() => {
     startMedia();
-    const handleBeforeUnload = async (event: BeforeUnloadEvent) => {
+  
+    // This function will be called when the component is about to unmount
+    const handleBeforeUnload = async () => {
+      // isUnloading.current is used to avoid double execution if stop is clicked
       if (user && !isUnloading.current) {
-        await deleteFirestoreUser(user.uid);
-        await deleteAuthUser(user);
+         try {
+           await endChat(chatId!, user.uid);
+           await deleteFirestoreUser(user.uid);
+           await deleteAuthUser(user);
+           console.log("Anonymous user and data deleted on unload.");
+         } catch (error) {
+           console.error("Error during unload cleanup:", error);
+         }
       }
     };
   
@@ -228,11 +235,12 @@ function ChatPageContent() {
 
     return () => {
         window.removeEventListener('beforeunload', handleBeforeUnload);
+        // Standard component unmount cleanup
         if(!isUnloading.current) {
             cleanup(true);
         }
     };
-  }, [startMedia, cleanup, user]);
+  }, [cleanup, user, chatId]);
   
   // Main logic to start or join a chat
   useEffect(() => {
@@ -363,3 +371,5 @@ export default function ChatPage() {
         </Suspense>
     )
 }
+
+    
