@@ -91,7 +91,7 @@ service cloud.firestore {
       allow create: if isSignedIn() && request.auth.uid in request.resource.data.participants;
       // Allow a user to list chats where they are a participant.
       // This is crucial for the listenForPartner function.
-      allow list: if isSignedIn() && request.auth.uid == request.query.filters.participants.to_array()[0];
+      allow list: if isSignedIn() && request.query.get("participants") != null && request.auth.uid == request.query.get("participants")[0];
       
       // Rules for WebRTC signaling subcollection
       match /peers/{peerId} {
