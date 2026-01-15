@@ -103,17 +103,21 @@ export const findPartner = async (
     }, { merge: true });
 
   const queueRef = collection(firestore, 'queue');
-  // Query for users other than myself
+  // Query for users in the queue, ordered by who has been waiting longest.
+  // We will filter out our own UID in the client.
   const q = query(
       queueRef,
-      where('uid', '!=', uid),
       orderBy('timestamp', 'asc'),
-      limit(20) // Widen the search slightly
+      limit(20)
   );
 
   const querySnapshot = await getDocs(q);
+  
+  // Filter out the current user from the potential partners
+  const potentialPartners = querySnapshot.docs.filter(doc => doc.id !== uid);
 
-  for (const partnerDoc of querySnapshot.docs) {
+
+  for (const partnerDoc of potentialPartners) {
       const partnerData = partnerDoc.data();
       const partnerUid = partnerData.uid;
       const partnerPrefs = partnerData.preferences as UserPreferences;
@@ -173,7 +177,8 @@ export const listenForPartner = (uid: string, callback: (chatId: string | null, 
     // Listen for a chat document where this user is a participant
     const q = query(
         collection(firestore, 'chats'), 
-        where('participants', 'array-contains', uid), 
+        where('participants', 'array-contains', uid),
+        // orderBy('createdAt', 'desc'), // Listen for the newest chat
         limit(1)
     );
 
@@ -186,6 +191,14 @@ export const listenForPartner = (uid: string, callback: (chatId: string | null, 
             // Check if user's status is 'searching', which means they were the "callee"
             const user = await getUser(uid);
             if (partnerUid && user?.status === 'searching') {
+                // The user who was found (the callee) also needs to be removed from the queue
+                // and have their status updated, though the caller's batch should have already done this.
+                // This is a safeguard.
+                const batch = writeBatch(firestore);
+                batch.delete(doc(firestore, 'queue', uid));
+                batch.update(doc(firestore, 'users', uid), { status: 'in-chat' });
+                await batch.commit().catch(e => console.log("Safeguard batch failed, likely already handled."));
+
                 callback(chatDoc.id, partnerUid);
             }
         }
