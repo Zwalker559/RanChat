@@ -95,21 +95,29 @@ export const findPartner = async (
   uid: string,
   preferences: UserPreferences
 ) => {
+  // Add user to the queue before searching
+  await setDoc(doc(firestore, 'queue', uid), {
+      uid,
+      preferences,
+      timestamp: serverTimestamp(),
+    }, { merge: true });
+
   const queueRef = collection(firestore, 'queue');
+  // Query for users other than myself
   const q = query(
       queueRef,
+      where('uid', '!=', uid),
+      orderBy('uid', 'asc'), // ensure consistent ordering
       orderBy('timestamp', 'asc'),
-      limit(10)
+      limit(20) // Widen the search slightly
   );
 
   const querySnapshot = await getDocs(q);
 
-  let partnerDoc = null;
-  for (const doc of querySnapshot.docs) {
-      const data = doc.data();
-      if (data.uid === uid) continue;
-
-      const partnerPrefs = data.preferences as UserPreferences;
+  for (const partnerDoc of querySnapshot.docs) {
+      const partnerData = partnerDoc.data();
+      const partnerUid = partnerData.uid;
+      const partnerPrefs = partnerData.preferences as UserPreferences;
       
       const selfGender = preferences.gender;
       const selfPref = preferences.matchPreference;
@@ -117,47 +125,58 @@ export const findPartner = async (
       const partnerGender = partnerPrefs.gender;
       const partnerPref = partnerPrefs.matchPreference;
 
+      // Check for mutual preference match
       const selfMatch = selfPref === 'both' || selfPref === partnerGender;
       const partnerMatch = partnerPref === 'both' || partnerPref === selfGender;
 
       if (selfMatch && partnerMatch) {
-          partnerDoc = doc;
-          break;
+          // Found a match
+          const chatId = doc(collection(firestore, 'chats')).id;
+          const chatRef = doc(firestore, 'chats', chatId);
+
+          const chatData = {
+            id: chatId,
+            participants: [uid, partnerUid],
+            createdAt: serverTimestamp(),
+          };
+
+          const batch = writeBatch(firestore);
+          
+          // Create the chat document
+          batch.set(chatRef, chatData);
+          
+          // Remove both users from the queue
+          batch.delete(doc(firestore, 'queue', uid));
+          batch.delete(doc(firestore, 'queue', partnerUid));
+          
+          // Set both users' status to 'in-chat'
+          batch.update(doc(firestore, 'users', uid), { status: 'in-chat' });
+          batch.update(doc(firestore, 'users', partnerUid), { status: 'in-chat' });
+
+          try {
+              await batch.commit();
+              // This user is the "caller" because they initiated the match
+              return {chatId, partnerUid};
+          } catch (error) {
+              // This can happen if both users try to create the chat at the same time.
+              // One will fail. The one that fails can just continue listening.
+              console.log("Batch commit failed, likely a race condition. The other user probably created the chat.", error);
+              return null;
+          }
       }
   }
 
-
-  if (!partnerDoc) {
-    await setDoc(doc(firestore, 'queue', uid), {
-      uid,
-      preferences,
-      timestamp: serverTimestamp(),
-    }, { merge: true });
-    return null;
-  } else {
-    const partnerUid = partnerDoc.data().uid;
-
-    const chatRef = doc(collection(firestore, 'chats'));
-    const chatId = chatRef.id;
-
-    const chatData = {
-      id: chatId,
-      participants: [uid, partnerUid],
-      createdAt: serverTimestamp(),
-    };
-
-    const batch = writeBatch(firestore);
-    batch.set(chatRef, chatData);
-    batch.delete(doc(firestore, 'queue', uid));
-    batch.delete(doc(firestore, 'queue', partnerUid));
-    await batch.commit();
-
-    return {chatId, partnerUid};
-  }
+  // No suitable partner found in the queue
+  return null;
 };
 
 export const listenForPartner = (uid: string, callback: (chatId: string | null, partnerUid: string | null) => void) => {
-    const q = query(collection(firestore, 'chats'), where('participants', 'array-contains', uid), limit(1));
+    // Listen for a chat document where this user is a participant
+    const q = query(
+        collection(firestore, 'chats'), 
+        where('participants', 'array-contains', uid), 
+        limit(1)
+    );
 
     const unsubscribe = onSnapshot(q, async (snapshot) => {
         if (!snapshot.empty) {
@@ -165,12 +184,15 @@ export const listenForPartner = (uid: string, callback: (chatId: string | null, 
             const participants = chatDoc.data().participants as string[];
             const partnerUid = participants.find(p => p !== uid);
             
-            if (partnerUid) {
+            // Check if user's status is 'searching', which means they were the "callee"
+            const user = await getUser(uid);
+            if (partnerUid && user?.status === 'searching') {
                 callback(chatDoc.id, partnerUid);
             }
         }
     }, (error) => {
         console.error("Error listening for partner:", error);
+        callback(null, null);
     });
     return unsubscribe;
 };

@@ -1,6 +1,6 @@
 "use client";
 import {useRouter} from 'next/navigation';
-import {useEffect, useCallback} from 'react';
+import {useEffect, useCallback, useRef} from 'react';
 import {useAuth} from '@/hooks/use-auth';
 import {listenForPartner, updateUserStatus, deleteUser as deleteFirestoreUser, findPartner, getUser } from '@/lib/firebase/firestore';
 import { deleteUser as deleteAuthUser } from 'firebase/auth';
@@ -22,8 +22,10 @@ export default function QueuePage() {
   const router = useRouter();
   const {user, appUser, auth} = useAuth();
   const { toast } = useToast();
+  const isCancelling = useRef(false);
 
   const handleCancel = useCallback(async () => {
+    isCancelling.current = true;
     if (user && auth?.currentUser) {
         try {
             await deleteFirestoreUser(user.uid);
@@ -47,37 +49,44 @@ export default function QueuePage() {
         return;
     };
     
+    // Set status to searching right away
     updateUserStatus(user.uid, 'searching');
     
-    // Attempt to find a partner immediately
-    findPartner(user.uid, appUser.preferences).then(match => {
-        if (match) {
-            router.push(`/chat?chatId=${match.chatId}&partnerUid=${match.partnerUid}&caller=true`);
-        }
-    });
+    const searchForPartner = async () => {
+      const match = await findPartner(user.uid, appUser.preferences);
+      if (match) {
+        // If a match is found by this client, they are the "caller"
+        router.push(`/chat?chatId=${match.chatId}&partnerUid=${match.partnerUid}&caller=true`);
+      }
+    }
 
-    const unsubscribe = listenForPartner(user.uid, (chatId, partnerUid) => {
-        unsubscribe(); 
+    // Attempt to find a partner immediately
+    searchForPartner();
+
+    // Also listen in case another user finds us
+    const unsubscribePartnerListener = listenForPartner(user.uid, (chatId, partnerUid) => {
         if (chatId && partnerUid) {
+            // If we are found by another client, we are the "callee"
             router.push(`/chat?chatId=${chatId}&partnerUid=${partnerUid}&caller=false`);
         }
     });
 
-    // Cleanup when the user navigates away from this page
     return () => {
-      unsubscribe();
-      // If user is still in searching state and navigates away (but doesn't cancel),
-      // update their status so they are not stuck in the queue.
-      // We check for user existence because this can run during unmount after cancellation.
-      if (user) {
-        // Use getDoc to check current status before overriding
-        // This avoids race conditions where a user gets a match then navigates away
+      unsubscribePartnerListener();
+      
+      // This cleanup logic runs when the component unmounts.
+      // We check `isCancelling` to see if unmount is due to cancellation.
+      // If not cancelling, it means the user might be navigating away (e.g. back button)
+      // while still in the queue.
+      if (!isCancelling.current && user) {
         const checkStatusAndSetOnline = async () => {
           const latestUser = await getUser(user.uid);
+          // Only set back to online if they are still 'searching'. 
+          // If they found a match, their status will be 'in-chat' and we shouldn't touch it.
           if (latestUser && latestUser.status === 'searching') {
-            updateUserStatus(user.uid, 'online');
+            await updateUserStatus(user.uid, 'online');
           }
-        }
+        };
         checkStatusAndSetOnline();
       }
     };
