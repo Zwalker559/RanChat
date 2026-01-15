@@ -32,14 +32,17 @@ export const AuthProvider = ({children}: {children: ReactNode}) => {
                    }
                    setLoading(false);
                 }, () => {
+                  setAppUser(null);
                   setLoading(false);
                 });
                 return () => unsubUser();
 
             } else {
                 try {
+                    // Attempt to sign in anonymously
                     const userCredential = await signInAnonymously(auth);
                     setUser(userCredential.user);
+                    // setLoading(false) will be called by the above listener when the user is set
                 } catch (error) {
                     const caughtError = error as AuthError;
                     console.error("Authentication Error:", caughtError.code, caughtError.message);
@@ -48,7 +51,6 @@ export const AuthProvider = ({children}: {children: ReactNode}) => {
                     } else {
                          setAuthError("An unexpected authentication error occurred. Please try again.");
                     }
-                } finally {
                     setLoading(false);
                 }
             }
@@ -59,6 +61,7 @@ export const AuthProvider = ({children}: {children: ReactNode}) => {
 
     const value = {user, appUser, loading, authError};
     
+    // If there is an auth error, show the error screen instead of the app
     if (authError) {
         return (
             <div className="flex h-screen items-center justify-center bg-background text-foreground p-8 text-center">
@@ -85,14 +88,13 @@ export const AuthProvider = ({children}: {children: ReactNode}) => {
         )
     }
 
-
     return (
         <AuthContext.Provider value={value}>
-            {!loading ? children : (
+            {loading ? (
                  <div className="flex h-screen items-center justify-center">
                     <p className="text-muted-foreground">Connecting...</p>
                  </div>
-            )}
+            ) : children }
         </AuthContext.Provider>
     );
 };

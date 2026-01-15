@@ -58,12 +58,20 @@ export function StartChatDialog() {
   });
 
   useEffect(() => {
+    // When the dialog opens and we have existing user data, pre-fill the form
     if (appUser && isOpen) {
         form.reset({
             username: appUser.username || "",
             gender: appUser.preferences.gender,
             matchPreference: appUser.preferences.matchPreference,
         });
+    } else if (isOpen) {
+        // If it's a new user, reset to defaults just in case
+        form.reset({
+            username: "",
+            gender: "male",
+            matchPreference: "both"
+        })
     }
   }, [appUser, isOpen, form]);
 
@@ -72,36 +80,33 @@ export function StartChatDialog() {
       console.error("No user signed in.");
       return;
     }
+    
+    // Create or update the user document
     await createUser(user.uid, values.username, {
       gender: values.gender,
       matchPreference: values.matchPreference,
     });
+
+    // Set status to searching and navigate to queue
     await updateUserStatus(user.uid, "searching");
     router.push("/queue");
   }
   
-  const handleStart = async () => {
-    if (appUser) {
-        await updateUserStatus(user!.uid, "searching");
-        router.push("/queue");
-    } else {
-        setIsOpen(true);
-    }
-  }
-
+  // The DialogTrigger will always open the dialog now.
+  // The logic inside onSubmit handles both new and existing users.
   return (
     <Dialog open={isOpen} onOpenChange={setIsOpen}>
       <DialogTrigger asChild>
-        <Button onClick={handleStart} size="lg" className="bg-accent hover:bg-accent/90 text-accent-foreground font-bold text-lg px-8 py-6 rounded-full shadow-lg shadow-accent/20 transition-transform transform hover:scale-105">
+        <Button size="lg" className="bg-accent hover:bg-accent/90 text-accent-foreground font-bold text-lg px-8 py-6 rounded-full shadow-lg shadow-accent/20 transition-transform transform hover:scale-105">
           <Rocket className="mr-2 h-5 w-5" />
           Start Chat
         </Button>
       </DialogTrigger>
       <DialogContent className="sm:max-w-[425px]">
         <DialogHeader>
-          <DialogTitle>Ready to connect?</DialogTitle>
+          <DialogTitle>{appUser ? "Ready to go?" : "Ready to connect?"}</DialogTitle>
           <DialogDescription>
-            Just a few things before we find you a match. This is only asked once.
+            {appUser ? "Confirm your details or make changes before starting." : "Just a few things before we find you a match. This is only asked once."}
           </DialogDescription>
         </DialogHeader>
         <Form {...form}>
@@ -185,7 +190,7 @@ export function StartChatDialog() {
                 </FormItem>
               )}
             />
-            <Button type="submit" className="w-full bg-primary hover:bg-primary/90">Find a match</Button>
+            <Button type="submit" className="w-full bg-primary hover:bg-primary/90">{appUser ? "Find a new match" : "Find a match"}</Button>
           </form>
         </Form>
       </DialogContent>
