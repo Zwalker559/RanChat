@@ -96,15 +96,17 @@ export const updateUserStatus = async (uid: string, status: User['status']) => {
   }
 };
 
+export const addUserToQueue = async (uid: string, currentUser: User) => {
+  await setDoc(doc(firestore, 'queue', uid), {
+      ...currentUser,
+      timestamp: serverTimestamp(),
+  }, { merge: true });
+}
+
 export const findPartner = async (
   uid: string,
   currentUser: User
 ) => {
-  await setDoc(doc(firestore, 'queue', uid), {
-      ...currentUser,
-      timestamp: serverTimestamp(),
-    }, { merge: true });
-
   const queueRef = collection(firestore, 'queue');
   const q = query(
       queueRef,
@@ -117,15 +119,12 @@ export const findPartner = async (
     .map(doc => ({ id: doc.id, ...doc.data() } as User & { id: string }))
     .filter(user => user.id !== uid);
     
-  // Separate into preferred and other matches
   const preferredMatches = potentialPartners.filter(partner => 
       (currentUser.matchPreference === 'both' || currentUser.matchPreference === partner.gender) &&
       (partner.matchPreference === 'both' || partner.matchPreference === currentUser.gender)
   );
   
   const otherMatches = potentialPartners.filter(partner => !preferredMatches.some(p => p.id === partner.id));
-
-  // Prioritize preferred matches, but fall back to others
   const sortedPartners = [...preferredMatches, ...otherMatches];
 
   for (const partner of sortedPartners) {
@@ -150,7 +149,7 @@ export const findPartner = async (
           await batch.commit();
           return {chatId, partnerUid};
       } catch (error) {
-          console.log("Batch commit failed, likely a race condition. The other user probably created the chat.", error);
+          console.log("Batch commit failed, likely a race condition.", error);
           return null;
       }
   }

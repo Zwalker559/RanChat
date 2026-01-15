@@ -3,7 +3,7 @@
 import {useRouter} from 'next/navigation';
 import {useEffect, useCallback, useRef} from 'react';
 import {useAuth} from '@/hooks/use-auth';
-import {listenForPartner, updateUserStatus, deleteUser as deleteFirestoreUser, findPartner, getUser } from '@/lib/firebase/firestore';
+import {listenForPartner, updateUserStatus, deleteUser as deleteFirestoreUser, findPartner, getUser, addUserToQueue } from '@/lib/firebase/firestore';
 import { deleteUser as deleteAuthUser } from 'firebase/auth';
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/hooks/use-toast';
@@ -50,21 +50,24 @@ export default function QueuePage() {
     };
     
     matchFound.current = false;
-    updateUserStatus(user.uid, 'searching');
-    
-    const searchForPartner = async () => {
-      if (matchFound.current || !appUser) return;
-      const match = await findPartner(user.uid, appUser);
-      if (match) {
-        matchFound.current = true;
-        router.push(`/chat?chatId=${match.chatId}&partnerUid=${match.partnerUid}&caller=true`);
-      }
-    }
+    isCancelling.current = false;
 
-    // Initial search
-    const searchInterval = setInterval(() => {
-        searchForPartner();
-    }, 5000); // Try to find a partner every 5 seconds
+    const startSearch = async () => {
+        await updateUserStatus(user.uid, 'searching');
+        await addUserToQueue(user.uid, appUser);
+
+        // Give listener a moment to find an incoming match
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        if (matchFound.current) return;
+
+        const match = await findPartner(user.uid, appUser);
+        if (match) {
+            matchFound.current = true;
+            router.push(`/chat?chatId=${match.chatId}&partnerUid=${match.partnerUid}&caller=true`);
+        }
+    }
+    
+    startSearch();
 
     const unsubscribePartnerListener = listenForPartner(user.uid, (chatId, partnerUid) => {
         if (chatId && partnerUid && !matchFound.current) {
@@ -74,12 +77,13 @@ export default function QueuePage() {
     });
 
     return () => {
-      clearInterval(searchInterval);
       unsubscribePartnerListener();
       
+      // If we navigate away without finding a match (e.g. cancel button), set status to online
       if (!matchFound.current && user && !isCancelling.current) {
         const checkStatusAndSetOnline = async () => {
           const latestUser = await getUser(user.uid);
+          // Only update if they are still 'searching', to avoid race conditions
           if (latestUser && latestUser.status === 'searching') {
             await updateUserStatus(user.uid, 'online');
           }
