@@ -50,6 +50,8 @@ function ChatPageContent() {
 
   const cleanup = useCallback(async (shouldEndChat = true) => {
     console.log("Cleaning up chat session...");
+    isUnloading.current = true; // Mark that cleanup has started
+
     firestoreUnsubscribers.current.forEach(unsub => unsub());
     firestoreUnsubscribers.current = [];
 
@@ -68,9 +70,11 @@ function ChatPageContent() {
     if (localVideoRef.current) localVideoRef.current.srcObject = null;
     if (remoteVideoRef.current) remoteVideoRef.current.srcObject = null;
 
-    if (chatId && user && shouldEndChat) {
-      await endChat(chatId, user.uid);
-    } else if (user) {
+    if (chatId && shouldEndChat) {
+      await endChat(chatId);
+    }
+    
+    if (user && !isConnecting) { // Only update status if not already trying to connect to next
         await updateUserStatus(user.uid, 'online');
     }
 
@@ -78,11 +82,12 @@ function ChatPageContent() {
     setPartnerUid(null);
     setPartnerUsername('Stranger');
     setIsConnecting(false);
-  }, [chatId, user]);
+    isUnloading.current = false;
+  }, [chatId, user, isConnecting]);
 
 
   const startWebRTC = useCallback(async (isCaller: boolean, currentChatId: string, currentPartnerUid: string) => {
-    if (!user || !auth) return;
+    if (!user || !auth || !localStreamRef.current) return;
     
     setIsConnecting(false); 
     setChatId(currentChatId);
@@ -93,7 +98,7 @@ function ChatPageContent() {
 
     pc.current = new RTCPeerConnection(servers);
 
-    localStreamRef.current?.getTracks().forEach(track => {
+    localStreamRef.current.getTracks().forEach(track => {
       pc.current!.addTrack(track, localStreamRef.current!);
     });
 
@@ -121,7 +126,7 @@ function ChatPageContent() {
         firestoreUnsubscribers.current.push(unsub);
     } else { 
         const unsub = listenForOffer(currentChatId, currentPartnerUid, async (offer) => {
-            if (pc.current) {
+            if (pc.current && !pc.current.remoteDescription) {
                 await pc.current.setRemoteDescription(new RTCSessionDescription(offer));
                 const answerDescription = await pc.current.createAnswer();
                 await pc.current.setLocalDescription(answerDescription);
@@ -136,16 +141,17 @@ function ChatPageContent() {
     });
     firestoreUnsubscribers.current.push(unsubIce);
     
-    const chatDocUnsub = onSnapshot(doc(firestore, 'chats', currentChatId), (docSnap) => {
-        if (!docSnap.exists()) {
-            console.log("Chat has been ended by partner.");
+    const chatDocUnsub = onSnapshot(doc(firestore, 'chats', currentChatId), async (docSnap) => {
+        if (!docSnap.exists() && !isUnloading.current) {
+            console.log("Chat has been ended by partner or deletion.");
             toast({ title: "Partner has disconnected", description: "Finding a new partner..." });
-            handleNext(true);
+            await cleanup(false); // Don't try to delete a doc that's already gone
+            router.push('/queue');
         }
     });
     firestoreUnsubscribers.current.push(chatDocUnsub);
 
-  }, [user, auth, toast]);
+  }, [user, auth, toast, cleanup]);
 
 
   const startMedia = useCallback(async () => {
@@ -153,12 +159,12 @@ function ChatPageContent() {
     try {
         const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
         localStreamRef.current = stream;
-        stream.getAudioTracks().forEach(t => t.enabled = isMicOn);
-        stream.getVideoTracks().forEach(t => t.enabled = isCamOn);
-        setHasCameraPermission(true);
         if (localVideoRef.current) {
             localVideoRef.current.srcObject = stream;
         }
+        stream.getAudioTracks().forEach(t => t.enabled = isMicOn);
+        stream.getVideoTracks().forEach(t => t.enabled = isCamOn);
+        setHasCameraPermission(true);
         return stream;
     } catch (error) {
         console.error('Error accessing camera:', error);
@@ -174,7 +180,7 @@ function ChatPageContent() {
     }
   }, [toast, isMicOn, isCamOn]);
 
-  const handleNext = useCallback(async (isAutoNext = false) => {
+  const handleNext = useCallback(async () => {
     setIsConnecting(true);
     await cleanup();
     router.push('/queue');
@@ -184,7 +190,6 @@ function ChatPageContent() {
     if (user && auth?.currentUser) {
         try {
             await deleteFirestoreUser(user.uid);
-            // This is the key part: deleting the user from Firebase Auth
             await deleteAuthUser(auth.currentUser);
             console.log("Anonymous user account and data deleted successfully.");
         } catch (error) {
@@ -199,33 +204,24 @@ function ChatPageContent() {
   }, [user, auth, toast]);
 
   const handleStop = async () => {
-    isUnloading.current = true;
     await cleanup();
     await fullUserDelete();
     router.push("/");
   };
   
   useEffect(() => {
-    const handleUnload = (e: BeforeUnloadEvent) => {
-      // This is a last-resort attempt. Modern browsers limit what can be done here.
-      // We can't use async operations. The most reliable cleanup is user-initiated (Stop button).
-      if (user && auth?.currentUser && !isUnloading.current) {
-          // This will not reliably work, but it's the best we can do in `beforeunload`.
-          // The primary cleanup should happen via the "Stop" button.
-          navigator.sendBeacon(`/api/cleanup?uid=${user.uid}`);
-      }
+    const handleBeforeUnload = async (e: BeforeUnloadEvent) => {
+      if (isUnloading.current) return;
+      e.preventDefault(); 
+      await cleanup();
+      await fullUserDelete();
     };
-  
-    window.addEventListener('beforeunload', handleUnload);
+    window.addEventListener('beforeunload', handleBeforeUnload);
 
     return () => {
-        window.removeEventListener('beforeunload', handleUnload);
-        // This cleanup runs when the component unmounts, e.g., navigating away
-        if (!isUnloading.current) {
-            cleanup(true);
-        }
+      window.removeEventListener('beforeunload', handleBeforeUnload);
     };
-  }, [cleanup, user, auth]);
+  }, [cleanup, fullUserDelete]);
   
   useEffect(() => {
     const initializeChat = async () => {
@@ -236,7 +232,6 @@ function ChatPageContent() {
         const urlIsCaller = searchParams.get('caller') === 'true';
 
         if (urlChatId && urlPartnerUid) {
-            setChatId(urlChatId);
             const chatDoc = await getChatDoc(urlChatId);
             if (chatDoc) {
                 await updateUserStatus(user.uid, 'in-chat');
@@ -252,15 +247,16 @@ function ChatPageContent() {
 
     if (user && appUser) {
         startMedia().then(stream => {
-            if (stream) initializeChat();
+            if (stream) {
+                initializeChat();
+            }
             else router.push('/'); // No camera access, go home
         });
-    } else if(!user) {
-        // If there's no user, auth is likely still loading or failed.
-        // AuthProvider handles redirecting, so we can just wait.
+    } else if(!user && !auth?.currentUser) {
+        router.push('/');
     }
 
-  }, [user, appUser, searchParams, startMedia, router, startWebRTC, handleNext, toast]);
+  }, [user, appUser, searchParams, startMedia, router, startWebRTC, handleNext, toast, auth]);
 
   return (
     <main className="grid h-screen max-h-screen grid-cols-1 lg:grid-cols-[1fr_400px] overflow-hidden">

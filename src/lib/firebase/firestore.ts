@@ -287,32 +287,36 @@ export const listenForMessages = (chatId: string, callback: (messages: Message[]
     })
 };
 
-export const endChat = async (chatId: string, myUid: string) => {
+export const endChat = async (chatId: string) => {
+    if (!chatId) return;
     try {
         const chatRef = doc(firestore, 'chats', chatId);
         const chatSnap = await getDoc(chatRef);
         
         if (chatSnap.exists()) {
-            const partnerUid = (chatSnap.data().participants as string[]).find(p => p !== myUid);
-            
-            // Delete chat and subcollections
-            const peersCol = collection(firestore, 'chats', chatId, 'peers');
-            const peersSnap = await getDocs(peersCol);
-            const batch = writeBatch(firestore);
-            peersSnap.forEach(peerDoc => {
+             const batch = writeBatch(firestore);
+
+            // Delete ICE candidates subcollection for each peer
+            const peersRef = collection(firestore, 'chats', chatId, 'peers');
+            const peersSnap = await getDocs(peersRef);
+            for (const peerDoc of peersSnap.docs) {
+                const iceCandidatesRef = collection(peerDoc.ref, 'iceCandidates');
+                const iceCandidatesSnap = await getDocs(iceCandidatesRef);
+                iceCandidatesSnap.forEach(iceDoc => batch.delete(iceDoc.ref));
                 batch.delete(peerDoc.ref);
-            });
-            await batch.commit();
-
-            await deleteDoc(chatRef);
-
-            if (partnerUid) {
-                await updateUserStatus(partnerUid, 'online');
             }
+
+            // Delete messages subcollection
+            const messagesRef = collection(firestore, 'chats', chatId, 'messages');
+            const messagesSnap = await getDocs(messagesRef);
+            messagesSnap.forEach(msgDoc => batch.delete(msgDoc.ref));
+            
+            // Delete the main chat document
+            batch.delete(chatRef);
+
+            await batch.commit();
         }
     } catch (e) {
         console.error("Error ending chat:", e);
-    } finally {
-        await updateUserStatus(myUid, 'online');
     }
 };
