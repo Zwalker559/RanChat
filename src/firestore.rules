@@ -2,66 +2,15 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // Helper functions
+    // Helper function to check if a user is signed in.
     function isSignedIn() {
       return request.auth != null;
     }
 
-    function isOwner(userId) {
-      return request.auth.uid == userId;
-    }
-
-    function isChatParticipant(chatId) {
-      return isSignedIn() && get(/databases/$(database)/documents/chats/$(chatId)).data.participants.hasAny([request.auth.uid]);
-    }
-    
-    // USERS: 
-    // - Anyone can check for usernames (for uniqueness)
-    // - Users can create their own profile
-    // - Users can read/write their own profile
-    match /users/{userId} {
-      allow list: if isSignedIn();
-      allow create, read, update: if isSignedIn() && isOwner(userId);
-      allow delete: if isSignedIn() && isOwner(userId);
-    }
-
-    // ACTIVE_USERS: Any signed-in user can see who is online, but only you can write your own status.
-    match /active_users/{userId} {
-      allow list, get: if isSignedIn();
-      allow write: if isSignedIn() && isOwner(userId);
-    }
-
-    // QUEUE: Any signed-in user can add/remove themselves from the queue and read it to find a match.
-    match /queue/{userId} {
+    // Allow any signed-in user to read and write to any document.
+    // NOTE: This is insecure and should be properly configured for a production environment.
+    match /{document=**} {
       allow read, write: if isSignedIn();
-    }
-    
-    // CHATS: Manages chat sessions and their subcollections.
-    match /chats/{chatId} {
-      allow get: if isChatParticipant(chatId);
-      
-      // Anyone can create a chat, but they must be one of the participants.
-      allow create: if isSignedIn() && request.auth.uid in request.resource.data.participants;
-      
-      // Users can only list chats they are a part of.
-      allow list: if isSignedIn() && request.query.where.to_list().map(filter => filter[2]).hasAny([request.auth.uid]);
-      
-      // A participant can delete a chat document (ends the chat).
-      allow delete: if isChatParticipant(chatId);
-      
-      // MESSAGES: Participants can read messages and create new ones.
-      match /messages/{messageId} {
-        allow read, create: if isChatParticipant(chatId);
-      }
-      
-      // PEERS: Signaling data for WebRTC.
-      match /peers/{peerId} {
-        allow read, write: if isChatParticipant(chatId);
-        
-        match /iceCandidates/{candidateId} {
-           allow read, create: if isChatParticipant(chatId);
-        }
-      }
     }
   }
 }
