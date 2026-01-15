@@ -1,6 +1,6 @@
 "use client";
 import {useState, useEffect, createContext, useContext, ReactNode} from 'react';
-import {onAuthStateChanged, signInAnonymously, User as FirebaseAuthUser, AuthError} from 'firebase/auth';
+import {onAuthStateChanged, signInAnonymously, User as FirebaseAuthUser, Auth, AuthError} from 'firebase/auth';
 import { auth, firestore } from '@/lib/firebase/config';
 import {doc, onSnapshot} from 'firebase/firestore';
 import type {User as AppUser} from '@/lib/types';
@@ -11,6 +11,7 @@ interface AuthContextType {
     appUser: AppUser | null;
     loading: boolean;
     authError: string | null;
+    auth: Auth | null;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -29,9 +30,12 @@ export const AuthProvider = ({children}: {children: ReactNode}) => {
                 const unsubUser = onSnapshot(userRef, (doc) => {
                    if (doc.exists()) {
                        setAppUser(doc.data() as AppUser);
+                   } else {
+                       setAppUser(null);
                    }
                    setLoading(false);
-                }, () => {
+                }, (error) => {
+                  console.error("Error fetching app user:", error);
                   setAppUser(null);
                   setLoading(false);
                 });
@@ -39,10 +43,8 @@ export const AuthProvider = ({children}: {children: ReactNode}) => {
 
             } else {
                 try {
-                    // Attempt to sign in anonymously
                     const userCredential = await signInAnonymously(auth);
                     setUser(userCredential.user);
-                    // setLoading(false) will be called by the above listener when the user is set
                 } catch (error) {
                     const caughtError = error as AuthError;
                     console.error("Authentication Error:", caughtError.code, caughtError.message);
@@ -59,9 +61,16 @@ export const AuthProvider = ({children}: {children: ReactNode}) => {
         return () => unsubscribe();
     }, []);
 
-    const value = {user, appUser, loading, authError};
+    const value = {user, appUser, loading, authError, auth};
     
-    // If there is an auth error, show the error screen instead of the app
+    if (loading) {
+        return (
+            <div className="flex h-screen items-center justify-center">
+               <p className="text-muted-foreground">Connecting...</p>
+            </div>
+       )
+    }
+    
     if (authError) {
         return (
             <div className="flex h-screen items-center justify-center bg-background text-foreground p-8 text-center">
@@ -90,11 +99,7 @@ export const AuthProvider = ({children}: {children: ReactNode}) => {
 
     return (
         <AuthContext.Provider value={value}>
-            {loading ? (
-                 <div className="flex h-screen items-center justify-center">
-                    <p className="text-muted-foreground">Connecting...</p>
-                 </div>
-            ) : children }
+            {children}
         </AuthContext.Provider>
     );
 };

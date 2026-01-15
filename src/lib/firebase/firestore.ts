@@ -33,8 +33,8 @@ export const createUser = async (
     status: 'online',
     createdAt: serverTimestamp(),
   };
-  await setDoc(userRef, newUser);
-  // Also create a document in active_users to show presence
+  // Use setDoc with merge to create or update user info
+  await setDoc(userRef, newUser, { merge: true });
   await setDoc(doc(firestore, 'active_users', uid), { uid, lastSeen: serverTimestamp() });
   return newUser;
 };
@@ -52,6 +52,8 @@ export const deleteUser = async (uid: string) => {
       await deleteDoc(userRef);
       const activeUserRef = doc(firestore, 'active_users', uid);
       await deleteDoc(activeUserRef);
+      const queueRef = doc(firestore, 'queue', uid);
+      await deleteDoc(queueRef);
     } catch(e) {
       console.error("Error deleting user from firestore", e);
     }
@@ -63,6 +65,9 @@ export const updateUserStatus = async (uid: string, status: User['status']) => {
   const userRef = doc(firestore, 'users', uid);
   const activeUserRef = doc(firestore, 'active_users', uid);
   try {
+    const userDoc = await getDoc(userRef);
+    if (!userDoc.exists()) return; // Don't try to update a non-existent user
+
     if (status === 'offline' || status === 'deleted') {
       await deleteDoc(activeUserRef);
     } else {
@@ -70,8 +75,7 @@ export const updateUserStatus = async (uid: string, status: User['status']) => {
     }
     await updateDoc(userRef, {status});
   } catch(e) {
-    //   User might not exist, which is fine
-    console.log("Could not update user status, maybe they don't exist yet", e);
+    console.log("Could not update user status", e);
   }
 };
 
@@ -79,12 +83,11 @@ export const findPartner = async (
   uid: string,
   preferences: UserPreferences
 ) => {
-  // Query for potential partners, fetch a small batch to filter client-side
   const queueRef = collection(firestore, 'queue');
   const q = query(
       queueRef,
       orderBy('timestamp', 'asc'),
-      limit(10) // Fetch 10 potential partners
+      limit(10)
   );
 
   const querySnapshot = await getDocs(q);
@@ -92,7 +95,7 @@ export const findPartner = async (
   let partnerDoc = null;
   for (const doc of querySnapshot.docs) {
       const data = doc.data();
-      if (data.uid === uid) continue; // Skip myself
+      if (data.uid === uid) continue;
 
       const partnerPrefs = data.preferences as UserPreferences;
       
@@ -102,20 +105,17 @@ export const findPartner = async (
       const partnerGender = partnerPrefs.gender;
       const partnerPref = partnerPrefs.matchPreference;
 
-      // My preference matches their gender
       const selfMatch = selfPref === 'both' || selfPref === partnerGender;
-      // Their preference matches my gender
       const partnerMatch = partnerPref === 'both' || partnerPref === selfGender;
 
       if (selfMatch && partnerMatch) {
           partnerDoc = doc;
-          break; // Found a suitable partner
+          break;
       }
   }
 
 
   if (!partnerDoc) {
-    // No match found in the current queue, so add/update current user in queue
     await setDoc(doc(firestore, 'queue', uid), {
       uid,
       preferences,
@@ -123,10 +123,8 @@ export const findPartner = async (
     }, { merge: true });
     return null;
   } else {
-    // Match found!
     const partnerUid = partnerDoc.data().uid;
 
-    // Create a new chat session
     const chatRef = doc(collection(firestore, 'chats'));
     const chatId = chatRef.id;
 
@@ -136,44 +134,31 @@ export const findPartner = async (
       createdAt: serverTimestamp(),
     };
 
-    await setDoc(chatRef, chatData);
-
-    // Remove both users from the queue in a batch
     const batch = writeBatch(firestore);
+    batch.set(chatRef, chatData);
     batch.delete(doc(firestore, 'queue', uid));
     batch.delete(doc(firestore, 'queue', partnerUid));
     await batch.commit();
-    
-    // Update user statuses
-    await updateUserStatus(uid, 'in-chat');
-    await updateUserStatus(partnerUid, 'in-chat');
 
     return {chatId, partnerUid};
   }
 };
 
 export const listenForPartner = (uid: string, callback: (chatId: string | null, partnerUid: string | null) => void) => {
-    // This function will now be primarily used by the queue page.
-    // It checks if a chat has been created for the user.
-    const q = query(collection(firestore, 'chats'), where('participants', 'array-contains', uid));
+    const q = query(collection(firestore, 'chats'), where('participants', 'array-contains', uid), limit(1));
 
     const unsubscribe = onSnapshot(q, async (snapshot) => {
         if (!snapshot.empty) {
-            const chatDoc = snapshot.docs[0]; // Assuming user is only in one chat
+            const chatDoc = snapshot.docs[0];
             const participants = chatDoc.data().participants as string[];
             const partnerUid = participants.find(p => p !== uid);
             
             if (partnerUid) {
-                // If we found a partner, we can stop listening.
-                unsubscribe();
-
-                // Make sure user is removed from queue
-                const userInQueueRef = doc(firestore, 'queue', uid);
-                await deleteDoc(userInQueueRef).catch(() => {});
-
                 callback(chatDoc.id, partnerUid);
             }
         }
+    }, (error) => {
+        console.error("Error listening for partner:", error);
     });
     return unsubscribe;
 };
@@ -297,12 +282,21 @@ export const endChat = async (chatId: string, myUid: string) => {
         
         if (chatSnap.exists()) {
             const partnerUid = (chatSnap.data().participants as string[]).find(p => p !== myUid);
+            
+            // Delete chat and subcollections
+            const peersCol = collection(firestore, 'chats', chatId, 'peers');
+            const peersSnap = await getDocs(peersCol);
+            const batch = writeBatch(firestore);
+            peersSnap.forEach(peerDoc => {
+                batch.delete(peerDoc.ref);
+            });
+            await batch.commit();
+
+            await deleteDoc(chatRef);
+
             if (partnerUid) {
                 await updateUserStatus(partnerUid, 'online');
             }
-             // This is aggressive, but for a random chat app, it's ok.
-             // We'll delete the chat document and all subcollections.
-            await deleteDoc(chatRef);
         }
     } catch (e) {
         console.error("Error ending chat:", e);
@@ -310,5 +304,3 @@ export const endChat = async (chatId: string, myUid: string) => {
         await updateUserStatus(myUid, 'online');
     }
 };
-
-    

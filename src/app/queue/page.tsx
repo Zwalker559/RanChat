@@ -19,18 +19,24 @@ const Spinner = () => (
 
 export default function QueuePage() {
   const router = useRouter();
-  const {user, appUser} = useAuth();
+  const {user, appUser, auth} = useAuth();
 
   useEffect(() => {
-    if (!user || !appUser) return;
+    if (!user || !appUser) {
+        // If user data is not loaded, maybe redirect or wait.
+        // If no user, AuthProvider should handle it.
+        if (!user) router.push('/');
+        return;
+    };
     
     updateUserStatus(user.uid, 'searching');
 
     const unsubscribe = listenForPartner(user.uid, (chatId, partnerUid) => {
-      if (chatId && partnerUid) {
-        unsubscribe();
-        router.push(`/chat?chatId=${chatId}`);
-      }
+        // When a partner is found, the listener in firestore.ts will call this.
+        unsubscribe(); // Stop listening
+        if (chatId && partnerUid) {
+            router.push(`/chat?chatId=${chatId}`);
+        }
     });
 
     return () => {
@@ -39,11 +45,11 @@ export default function QueuePage() {
   }, [user, appUser, router]);
 
   const handleCancel = async () => {
-    if (user) {
+    if (user && auth?.currentUser) {
         try {
-            // First remove user from queue so they don't get matched
+            await updateUserStatus(user.uid, 'offline');
             await deleteFirestoreUser(user.uid);
-            await deleteAuthUser(user);
+            await deleteAuthUser(auth.currentUser);
         } catch (error) {
             console.error("Error deleting user during cancel:", error);
         }

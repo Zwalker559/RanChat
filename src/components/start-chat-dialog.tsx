@@ -58,15 +58,15 @@ export function StartChatDialog() {
   });
 
   useEffect(() => {
-    // When the dialog opens and we have existing user data, pre-fill the form
-    if (appUser && isOpen) {
+    if (!isOpen) return;
+
+    if (appUser) {
         form.reset({
             username: appUser.username || "",
             gender: appUser.preferences.gender,
             matchPreference: appUser.preferences.matchPreference,
         });
-    } else if (isOpen) {
-        // If it's a new user, reset to defaults just in case
+    } else {
         form.reset({
             username: "",
             gender: "male",
@@ -81,19 +81,15 @@ export function StartChatDialog() {
       return;
     }
     
-    // Create or update the user document
     await createUser(user.uid, values.username, {
       gender: values.gender,
       matchPreference: values.matchPreference,
     });
 
-    // Set status to searching and navigate to queue
-    await updateUserStatus(user.uid, "searching");
-    router.push("/queue");
+    router.push("/chat");
+    setIsOpen(false);
   }
   
-  // The DialogTrigger will always open the dialog now.
-  // The logic inside onSubmit handles both new and existing users.
   return (
     <Dialog open={isOpen} onOpenChange={setIsOpen}>
       <DialogTrigger asChild>
@@ -104,9 +100,9 @@ export function StartChatDialog() {
       </DialogTrigger>
       <DialogContent className="sm:max-w-[425px]">
         <DialogHeader>
-          <DialogTitle>{appUser ? "Ready to go?" : "Ready to connect?"}</DialogTitle>
+          <DialogTitle>{appUser ? "Update your info?" : "Ready to connect?"}</DialogTitle>
           <DialogDescription>
-            {appUser ? "Confirm your details or make changes before starting." : "Just a few things before we find you a match. This is only asked once."}
+            {appUser ? "Confirm your details or make changes before starting." : "Just a few things before we find you a match."}
           </DialogDescription>
         </DialogHeader>
         <Form {...form}>

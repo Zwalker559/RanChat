@@ -9,9 +9,9 @@ import { ChatWindow } from '@/components/chat/chat-window';
 import { ChatControls } from '@/components/chat/chat-controls';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
-import { Minus, Plus, Maximize, Minimize } from 'lucide-react';
+import { Maximize, Minimize } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { findPartner, createOffer, listenForOffer, createAnswer, listenForAnswer, addIceCandidate, listenForIceCandidates, endChat, updateUserStatus, getUser, listenForPartner, getChatDoc, deleteUser as deleteFirestoreUser } from '@/lib/firebase/firestore';
+import { findPartner, createOffer, listenForOffer, createAnswer, listenForAnswer, addIceCandidate, listenForIceCandidates, endChat, updateUserStatus, getUser, getChatDoc, deleteUser as deleteFirestoreUser } from '@/lib/firebase/firestore';
 import { Unsubscribe, onSnapshot, doc } from 'firebase/firestore';
 import { firestore } from '@/lib/firebase/config';
 import { deleteUser as deleteAuthUser } from 'firebase/auth';
@@ -29,7 +29,7 @@ function ChatPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { toast } = useToast();
-  const { user, appUser } = useAuth();
+  const { user, appUser, auth } = useAuth();
 
   const [isMicOn, setIsMicOn] = useState(true);
   const [isCamOn, setIsCamOn] = useState(true);
@@ -70,6 +70,9 @@ function ChatPageContent() {
 
     if (chatId && user && shouldEndChat) {
       await endChat(chatId, user.uid);
+    } else if (user) {
+        // If not in a chat, but cleaning up, ensure status is correct
+        await updateUserStatus(user.uid, 'online');
     }
 
     setChatId(null);
@@ -80,9 +83,9 @@ function ChatPageContent() {
 
 
   const startWebRTC = useCallback(async (isCaller: boolean, currentChatId: string, currentPartnerUid: string) => {
-    if (!user) return;
+    if (!user || !auth) return;
     
-    setIsConnecting(false); // We have a match, no longer connecting
+    setIsConnecting(false); 
     setChatId(currentChatId);
     setPartnerUid(currentPartnerUid);
 
@@ -134,17 +137,16 @@ function ChatPageContent() {
     });
     firestoreUnsubscribers.current.push(unsubIce);
     
-    // Listen for partner disconnecting
     const chatDocUnsub = onSnapshot(doc(firestore, 'chats', currentChatId), (docSnap) => {
         if (!docSnap.exists()) {
             console.log("Chat has been ended by partner.");
             toast({ title: "Partner has disconnected", description: "Finding a new partner..." });
-            handleNext(true); // Automatically find a new partner
+            handleNext(true);
         }
     });
     firestoreUnsubscribers.current.push(chatDocUnsub);
 
-  }, [user, toast]);
+  }, [user, auth, toast]);
 
 
   const startMedia = useCallback(async () => {
@@ -168,6 +170,7 @@ function ChatPageContent() {
             description: 'Please enable camera permissions in your browser settings to use this feature.',
         });
         setIsCamOn(false);
+        setIsConnecting(false);
         return null;
     }
   }, [toast, isMicOn, isCamOn]);
@@ -177,32 +180,34 @@ function ChatPageContent() {
     
     await cleanup();
     
-    // Start media stream before finding a partner
     const stream = await startMedia();
-    if (!stream) {
-        setIsConnecting(false);
-        return;
-    }
+    if (!stream) return;
 
     if (user && appUser) {
-        const match = await findPartner(user.uid, appUser.preferences);
-        if (match) {
-            await updateUserStatus(user.uid, 'in-chat');
-            startWebRTC(true, match.chatId, match.partnerUid);
-        } else {
-            // No immediate match, go to queue.
-            router.push('/queue');
+        try {
+            await updateUserStatus(user.uid, 'searching');
+            const match = await findPartner(user.uid, appUser.preferences);
+            if (match) {
+                await updateUserStatus(user.uid, 'in-chat');
+                startWebRTC(true, match.chatId, match.partnerUid);
+            } else {
+                router.push('/queue');
+            }
+        } catch(error) {
+            console.error("Error finding partner:", error);
+            toast({variant: 'destructive', title: "Error finding partner", description: "Please try again."});
+            setIsConnecting(false);
         }
     }
-  }, [user, appUser, cleanup, router, startWebRTC, startMedia]);
+  }, [user, appUser, cleanup, router, startWebRTC, startMedia, toast]);
 
   const handleStop = async () => {
-    isUnloading.current = true; // Prevents double cleanup in unload handler
+    isUnloading.current = true;
     await cleanup();
-    if (user) {
+    if (user && auth?.currentUser) {
       try {
         await deleteFirestoreUser(user.uid);
-        await deleteAuthUser(user);
+        await deleteAuthUser(auth.currentUser);
         console.log("Anonymous user and data deleted successfully.");
       } catch (error) {
         console.error("Error deleting anonymous user during stop:", error);
@@ -211,45 +216,35 @@ function ChatPageContent() {
     router.push("/");
   };
   
-
-  // Initial media setup & cleanup
   useEffect(() => {
-    startMedia();
-  
-    // This function will be called when the component is about to unmount
-    const handleBeforeUnload = async () => {
-      // isUnloading.current is used to avoid double execution if stop is clicked
-      if (user && !isUnloading.current) {
-         try {
-           if (chatId) await endChat(chatId, user.uid);
-           await deleteFirestoreUser(user.uid);
-           await deleteAuthUser(user);
-           console.log("Anonymous user and data deleted on unload.");
-         } catch (error) {
-           console.error("Error during unload cleanup:", error);
-         }
+    const handleUnload = async () => {
+      if (user && auth?.currentUser && !isUnloading.current) {
+        try {
+          if (chatId) await endChat(chatId, user.uid);
+          await deleteFirestoreUser(user.uid);
+          await deleteAuthUser(auth.currentUser);
+        } catch (error) {
+          console.error("Error during unload cleanup:", error);
+        }
       }
     };
   
-    window.addEventListener('beforeunload', handleBeforeUnload);
+    window.addEventListener('beforeunload', handleUnload);
 
     return () => {
-        window.removeEventListener('beforeunload', handleBeforeUnload);
-        // Standard component unmount cleanup
+        window.removeEventListener('beforeunload', handleUnload);
         if(!isUnloading.current) {
             cleanup(true);
         }
     };
-  }, [cleanup, user, chatId]);
+  }, [cleanup, user, chatId, auth]);
   
-  // Main logic to start or join a chat
   useEffect(() => {
     const initializeChat = async () => {
         if (!user || !appUser || !localStreamRef.current) return;
 
         const urlChatId = searchParams.get('chatId');
         
-        // If there's a chatId in URL, we are joining.
         if (urlChatId) {
             setChatId(urlChatId);
             const chatDoc = await getChatDoc(urlChatId);
@@ -263,24 +258,18 @@ function ChatPageContent() {
                     router.push('/');
                 }
             } else {
-                // If chat doc doesn't exist, it might have been deleted, start fresh
                 handleNext();
             }
-        } else if (!chatId) { // No chatId anywhere, so we are initiating
+        } else if (!chatId) {
             handleNext();
         }
     };
 
     if (user && appUser && hasCameraPermission) {
-        if (localStreamRef.current) {
-            initializeChat();
-        } else {
-            startMedia().then(stream => {
-                if (stream) initializeChat();
-            });
-        }
+        startMedia().then(stream => {
+            if (stream) initializeChat();
+        });
     }
-
   }, [user, appUser, searchParams, hasCameraPermission, startMedia, router, startWebRTC, handleNext, toast, chatId]);
 
   return (
@@ -380,5 +369,3 @@ export default function ChatPage() {
         </Suspense>
     )
 }
-
-    
