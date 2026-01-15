@@ -107,7 +107,6 @@ export const findPartner = async (
   const q = query(
       queueRef,
       where('uid', '!=', uid),
-      orderBy('uid', 'asc'), // ensure consistent ordering
       orderBy('timestamp', 'asc'),
       limit(20) // Widen the search slightly
   );
