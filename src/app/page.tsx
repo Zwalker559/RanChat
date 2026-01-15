@@ -1,3 +1,4 @@
+
 "use client";
 
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -10,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import {
   Form,
   FormControl,
+  FormDescription,
   FormField,
   FormItem,
   FormLabel,
@@ -17,10 +19,12 @@ import {
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
-import { Rocket } from "lucide-react";
+import { Mic, MicOff, Rocket, Video, VideoOff } from "lucide-react";
 import { Label } from "@/components/ui/label";
 import { LiveUserCount } from "@/components/live-user-count";
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { cn } from "@/lib/utils";
+import { Switch } from "@/components/ui/switch";
 
 const formSchema = z.object({
   username: z.string().min(2, {
@@ -41,6 +45,26 @@ export default function Home() {
   const router = useRouter();
   const { user } = useAuth();
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isCamOn, setIsCamOn] = useState(true);
+  const [isMicOn, setIsMicOn] = useState(true);
+
+  useEffect(() => {
+    // Load persisted media settings from localStorage
+    const savedCam = localStorage.getItem('ran-chat-cam-on');
+    const savedMic = localStorage.getItem('ran-chat-mic-on');
+    if (savedCam !== null) setIsCamOn(JSON.parse(savedCam));
+    if (savedMic !== null) setIsMicOn(JSON.parse(savedMic));
+  }, []);
+
+  const handleToggleCam = (value: boolean) => {
+    setIsCamOn(value);
+    localStorage.setItem('ran-chat-cam-on', JSON.stringify(value));
+  }
+
+  const handleToggleMic = (value: boolean) => {
+    setIsMicOn(value);
+    localStorage.setItem('ran-chat-mic-on', JSON.stringify(value));
+  }
   
   const form = useForm<z.infer<typeof formSchema>>({
     resolver: zodResolver(formSchema),
@@ -67,9 +91,12 @@ export default function Home() {
         return;
     }
     
-    await createUser(user.uid, values.username, {
+    await createUser(user.uid, {
+      username: values.username,
       gender: values.gender,
       matchPreference: values.matchPreference,
+      isCamOn: isCamOn,
+      isMicOn: isMicOn,
     });
 
     router.push("/queue");
@@ -173,6 +200,42 @@ export default function Home() {
                     </FormItem>
                   )}
                 />
+
+                <div className="space-y-4 pt-2">
+                    <FormItem className="flex flex-row items-center justify-between rounded-lg border p-3 shadow-sm bg-background/50">
+                        <div className="space-y-0.5">
+                            <FormLabel className="flex items-center gap-2">
+                                {isCamOn ? <Video /> : <VideoOff />} Camera On
+                            </FormLabel>
+                            <FormDescription>
+                                Start with your camera enabled.
+                            </FormDescription>
+                        </div>
+                        <FormControl>
+                            <Switch
+                                checked={isCamOn}
+                                onCheckedChange={handleToggleCam}
+                            />
+                        </FormControl>
+                    </FormItem>
+                     <FormItem className="flex flex-row items-center justify-between rounded-lg border p-3 shadow-sm bg-background/50">
+                        <div className="space-y-0.5">
+                            <FormLabel className="flex items-center gap-2">
+                                {isMicOn ? <Mic /> : <MicOff />} Microphone On
+                            </FormLabel>
+                             <FormDescription>
+                                Start with your microphone unmuted.
+                            </FormDescription>
+                        </div>
+                        <FormControl>
+                            <Switch
+                                checked={isMicOn}
+                                onCheckedChange={handleToggleMic}
+                            />
+                        </FormControl>
+                    </FormItem>
+                </div>
+
                 <Button type="submit" disabled={isSubmitting} className="w-full bg-accent hover:bg-accent/90 text-accent-foreground font-bold text-lg px-8 py-6 rounded-full shadow-lg shadow-accent/20 transition-transform transform hover:scale-105">
                   <Rocket className="mr-2 h-5 w-5" />
                   {isSubmitting ? "Starting..." : "Start Chat"}

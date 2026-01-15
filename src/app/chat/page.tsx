@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useState, useRef, useEffect, useCallback, Suspense } from 'react';
@@ -11,7 +12,7 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Maximize, Minimize } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { createOffer, listenForOffer, createAnswer, listenForAnswer, addIceCandidate, listenForIceCandidates, endChat, updateUserStatus, getUser, getChatDoc, deleteUser as deleteFirestoreUser } from '@/lib/firebase/firestore';
+import { createOffer, listenForOffer, createAnswer, listenForAnswer, addIceCandidate, listenForIceCandidates, endChat, updateUserStatus, getUser, getChatDoc, deleteUser as deleteFirestoreUser, updateUser } from '@/lib/firebase/firestore';
 import { Unsubscribe, onSnapshot, doc } from 'firebase/firestore';
 import { firestore } from '@/lib/firebase/config';
 import { deleteUser as deleteAuthUser } from 'firebase/auth';
@@ -48,9 +49,10 @@ function ChatPageContent() {
   const firestoreUnsubscribers = useRef<Unsubscribe[]>([]);
   const isUnloading = useRef(false);
 
-  const cleanup = useCallback(async (shouldEndChat = true) => {
+  const cleanup = useCallback(async (options: {endChatSession?: boolean, isNext?: boolean} = {}) => {
+    const { endChatSession = true, isNext = false } = options;
     console.log("Cleaning up chat session...");
-    isUnloading.current = true; // Mark that cleanup has started
+    isUnloading.current = true;
 
     firestoreUnsubscribers.current.forEach(unsub => unsub());
     firestoreUnsubscribers.current = [];
@@ -70,12 +72,12 @@ function ChatPageContent() {
     if (localVideoRef.current) localVideoRef.current.srcObject = null;
     if (remoteVideoRef.current) remoteVideoRef.current.srcObject = null;
 
-    if (chatId && shouldEndChat) {
+    if (chatId && endChatSession) {
       await endChat(chatId);
     }
     
-    if (user && !isConnecting) { // Only update status if not already trying to connect to next
-        await updateUserStatus(user.uid, 'online');
+    if (user && !isNext) {
+      await updateUserStatus(user.uid, 'online');
     }
 
     setChatId(null);
@@ -83,7 +85,7 @@ function ChatPageContent() {
     setPartnerUsername('Stranger');
     setIsConnecting(false);
     isUnloading.current = false;
-  }, [chatId, user, isConnecting]);
+  }, [chatId, user]);
 
 
   const startWebRTC = useCallback(async (isCaller: boolean, currentChatId: string, currentPartnerUid: string) => {
@@ -145,13 +147,13 @@ function ChatPageContent() {
         if (!docSnap.exists() && !isUnloading.current) {
             console.log("Chat has been ended by partner or deletion.");
             toast({ title: "Partner has disconnected", description: "Finding a new partner..." });
-            await cleanup(false); // Don't try to delete a doc that's already gone
+            await cleanup({ endChatSession: false, isNext: true });
             router.push('/queue');
         }
     });
     firestoreUnsubscribers.current.push(chatDocUnsub);
 
-  }, [user, auth, toast, cleanup]);
+  }, [user, auth, toast, cleanup, router]);
 
 
   const startMedia = useCallback(async () => {
@@ -182,7 +184,7 @@ function ChatPageContent() {
 
   const handleNext = useCallback(async () => {
     setIsConnecting(true);
-    await cleanup();
+    await cleanup({ isNext: true });
     router.push('/queue');
   }, [cleanup, router]);
 
@@ -204,7 +206,7 @@ function ChatPageContent() {
   }, [user, auth, toast]);
 
   const handleStop = async () => {
-    await cleanup();
+    await cleanup({ isNext: false });
     await fullUserDelete();
     router.push("/");
   };
@@ -213,7 +215,7 @@ function ChatPageContent() {
     const handleBeforeUnload = async (e: BeforeUnloadEvent) => {
       if (isUnloading.current) return;
       e.preventDefault(); 
-      await cleanup();
+      await cleanup({ isNext: false });
       await fullUserDelete();
     };
     window.addEventListener('beforeunload', handleBeforeUnload);
@@ -223,6 +225,13 @@ function ChatPageContent() {
     };
   }, [cleanup, fullUserDelete]);
   
+  useEffect(() => {
+    if (appUser) {
+        setIsCamOn(appUser.isCamOn);
+        setIsMicOn(appUser.isMicOn);
+    }
+  }, [appUser]);
+
   useEffect(() => {
     const initializeChat = async () => {
         if (!user || !appUser || !localStreamRef.current) return;
@@ -238,7 +247,7 @@ function ChatPageContent() {
                 startWebRTC(urlIsCaller, urlChatId, urlPartnerUid);
             } else {
                 toast({ title: "Chat not found", description: "The chat you were looking for doesn't exist. Finding a new partner." });
-                handleNext();
+                router.push('/queue');
             }
         } else {
             router.push('/queue');
@@ -256,7 +265,31 @@ function ChatPageContent() {
         router.push('/');
     }
 
-  }, [user, appUser, searchParams, startMedia, router, startWebRTC, handleNext, toast, auth]);
+  }, [user, appUser, searchParams, startMedia, router, startWebRTC, toast, auth]);
+
+  const handleToggleMic = () => {
+    const newMicState = !isMicOn;
+    setIsMicOn(newMicState);
+    if (localStreamRef.current) {
+        localStreamRef.current.getAudioTracks().forEach(t => t.enabled = newMicState);
+    }
+    if (user) {
+        updateUser(user.uid, { isMicOn: newMicState });
+        localStorage.setItem('ran-chat-mic-on', JSON.stringify(newMicState));
+    }
+  }
+
+  const handleToggleCam = () => {
+    const newCamState = !isCamOn;
+    setIsCamOn(newCamState);
+    if (localStreamRef.current) {
+        localStreamRef.current.getVideoTracks().forEach(t => t.enabled = newCamState);
+    }
+    if (user) {
+        updateUser(user.uid, { isCamOn: newCamState });
+        localStorage.setItem('ran-chat-cam-on', JSON.stringify(newCamState));
+    }
+  }
 
   return (
     <main className="grid h-screen max-h-screen grid-cols-1 lg:grid-cols-[1fr_400px] overflow-hidden">
@@ -315,20 +348,8 @@ function ChatPageContent() {
             isCamOn={isCamOn}
             isConnecting={isConnecting}
             inCall={!!chatId}
-            onToggleMic={() => {
-                const newMicState = !isMicOn;
-                setIsMicOn(newMicState);
-                if (localStreamRef.current) {
-                    localStreamRef.current.getAudioTracks().forEach(t => t.enabled = newMicState);
-                }
-            }}
-            onToggleCam={() => {
-                const newCamState = !isCamOn;
-                setIsCamOn(newCamState);
-                 if (localStreamRef.current) {
-                    localStreamRef.current.getVideoTracks().forEach(t => t.enabled = newCamState);
-                }
-            }}
+            onToggleMic={handleToggleMic}
+            onToggleCam={handleToggleCam}
             onNext={handleNext}
             onStop={handleStop}
           />

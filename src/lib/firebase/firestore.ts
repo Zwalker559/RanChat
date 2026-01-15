@@ -1,3 +1,4 @@
+
 import {
   doc,
   setDoc,
@@ -17,26 +18,23 @@ import {
   limit,
 } from 'firebase/firestore';
 import {firestore} from './config';
-import type {User, UserPreferences, Message} from '@/lib/types';
+import type {User, Message} from '@/lib/types';
+
+type CreateUserData = Omit<User, 'uid' | 'status' | 'createdAt'>;
 
 // User Management
 export const createUser = async (
   uid: string,
-  username: string,
-  preferences: UserPreferences
+  userData: CreateUserData,
 ) => {
   const userRef = doc(firestore, 'users', uid);
-  const newUser: User = {
-    uid,
-    username,
-    preferences,
+  const newUser: Omit<User, 'uid'> & { createdAt: any } = {
+    ...userData,
     status: 'online',
     createdAt: serverTimestamp(),
   };
-  // Use setDoc with merge to create or update user info
   await setDoc(userRef, newUser, { merge: true });
   await setDoc(doc(firestore, 'active_users', uid), { uid, lastSeen: serverTimestamp() });
-  return newUser;
 };
 
 export const isUsernameTaken = async (username: string): Promise<boolean> => {
@@ -72,13 +70,20 @@ export const deleteUser = async (uid: string) => {
 };
 
 
+export const updateUser = async (uid: string, data: Partial<User>) => {
+    if (!uid) return;
+    const userRef = doc(firestore, 'users', uid);
+    await updateDoc(userRef, data);
+};
+
+
 export const updateUserStatus = async (uid: string, status: User['status']) => {
   if (!uid) return;
   const userRef = doc(firestore, 'users', uid);
   const activeUserRef = doc(firestore, 'active_users', uid);
   try {
     const userDoc = await getDoc(userRef);
-    if (!userDoc.exists()) return; // Don't try to update a non-existent user
+    if (!userDoc.exists()) return;
 
     if (status === 'offline' || status === 'deleted') {
       await deleteDoc(activeUserRef);
@@ -93,18 +98,14 @@ export const updateUserStatus = async (uid: string, status: User['status']) => {
 
 export const findPartner = async (
   uid: string,
-  preferences: UserPreferences
+  currentUser: User
 ) => {
-  // Add user to the queue before searching
   await setDoc(doc(firestore, 'queue', uid), {
-      uid,
-      preferences,
+      ...currentUser,
       timestamp: serverTimestamp(),
     }, { merge: true });
 
   const queueRef = collection(firestore, 'queue');
-  // Query for users in the queue, ordered by who has been waiting longest.
-  // We will filter out our own UID in the client.
   const q = query(
       queueRef,
       orderBy('timestamp', 'asc'),
@@ -112,73 +113,56 @@ export const findPartner = async (
   );
 
   const querySnapshot = await getDocs(q);
+  const potentialPartners = querySnapshot.docs
+    .map(doc => ({ id: doc.id, ...doc.data() } as User & { id: string }))
+    .filter(user => user.id !== uid);
+    
+  // Separate into preferred and other matches
+  const preferredMatches = potentialPartners.filter(partner => 
+      (currentUser.matchPreference === 'both' || currentUser.matchPreference === partner.gender) &&
+      (partner.matchPreference === 'both' || partner.matchPreference === currentUser.gender)
+  );
   
-  // Filter out the current user from the potential partners
-  const potentialPartners = querySnapshot.docs.filter(doc => doc.id !== uid);
+  const otherMatches = potentialPartners.filter(partner => !preferredMatches.some(p => p.id === partner.id));
 
+  // Prioritize preferred matches, but fall back to others
+  const sortedPartners = [...preferredMatches, ...otherMatches];
 
-  for (const partnerDoc of potentialPartners) {
-      const partnerData = partnerDoc.data();
-      const partnerUid = partnerData.uid;
-      const partnerPrefs = partnerData.preferences as UserPreferences;
-      
-      const selfGender = preferences.gender;
-      const selfPref = preferences.matchPreference;
-      
-      const partnerGender = partnerPrefs.gender;
-      const partnerPref = partnerPrefs.matchPreference;
+  for (const partner of sortedPartners) {
+      const partnerUid = partner.id;
+      const chatId = doc(collection(firestore, 'chats')).id;
+      const chatRef = doc(firestore, 'chats', chatId);
 
-      // Check for mutual preference match
-      const selfMatch = selfPref === 'both' || selfPref === partnerGender;
-      const partnerMatch = partnerPref === 'both' || partnerPref === selfGender;
+      const chatData = {
+        id: chatId,
+        participants: [uid, partnerUid],
+        createdAt: serverTimestamp(),
+      };
 
-      if (selfMatch && partnerMatch) {
-          // Found a match
-          const chatId = doc(collection(firestore, 'chats')).id;
-          const chatRef = doc(firestore, 'chats', chatId);
+      const batch = writeBatch(firestore);
+      batch.set(chatRef, chatData);
+      batch.delete(doc(firestore, 'queue', uid));
+      batch.delete(doc(firestore, 'queue', partnerUid));
+      batch.update(doc(firestore, 'users', uid), { status: 'in-chat' });
+      batch.update(doc(firestore, 'users', partnerUid), { status: 'in-chat' });
 
-          const chatData = {
-            id: chatId,
-            participants: [uid, partnerUid],
-            createdAt: serverTimestamp(),
-          };
-
-          const batch = writeBatch(firestore);
-          
-          // Create the chat document
-          batch.set(chatRef, chatData);
-          
-          // Remove both users from the queue
-          batch.delete(doc(firestore, 'queue', uid));
-          batch.delete(doc(firestore, 'queue', partnerUid));
-          
-          // Set both users' status to 'in-chat'
-          batch.update(doc(firestore, 'users', uid), { status: 'in-chat' });
-          batch.update(doc(firestore, 'users', partnerUid), { status: 'in-chat' });
-
-          try {
-              await batch.commit();
-              // This user is the "caller" because they initiated the match
-              return {chatId, partnerUid};
-          } catch (error) {
-              // This can happen if both users try to create the chat at the same time.
-              // One will fail. The one that fails can just continue listening.
-              console.log("Batch commit failed, likely a race condition. The other user probably created the chat.", error);
-              return null;
-          }
+      try {
+          await batch.commit();
+          return {chatId, partnerUid};
+      } catch (error) {
+          console.log("Batch commit failed, likely a race condition. The other user probably created the chat.", error);
+          return null;
       }
   }
 
-  // No suitable partner found in the queue
   return null;
 };
 
 export const listenForPartner = (uid: string, callback: (chatId: string | null, partnerUid: string | null) => void) => {
-    // Listen for a chat document where this user is a participant
     const q = query(
         collection(firestore, 'chats'), 
         where('participants', 'array-contains', uid),
-        // orderBy('createdAt', 'desc'), // Listen for the newest chat
+        orderBy('createdAt', 'desc'),
         limit(1)
     );
 
@@ -188,12 +172,8 @@ export const listenForPartner = (uid: string, callback: (chatId: string | null, 
             const participants = chatDoc.data().participants as string[];
             const partnerUid = participants.find(p => p !== uid);
             
-            // Check if user's status is 'searching', which means they were the "callee"
             const user = await getUser(uid);
             if (partnerUid && user?.status === 'searching') {
-                // The user who was found (the callee) also needs to be removed from the queue
-                // and have their status updated, though the caller's batch should have already done this.
-                // This is a safeguard.
                 const batch = writeBatch(firestore);
                 batch.delete(doc(firestore, 'queue', uid));
                 batch.update(doc(firestore, 'users', uid), { status: 'in-chat' });
@@ -329,6 +309,7 @@ export const endChat = async (chatId: string) => {
         
         if (chatSnap.exists()) {
              const batch = writeBatch(firestore);
+             const participants = chatSnap.data().participants || [];
 
             // Delete ICE candidates subcollection for each peer
             const peersRef = collection(firestore, 'chats', chatId, 'peers');
@@ -347,6 +328,12 @@ export const endChat = async (chatId: string) => {
             
             // Delete the main chat document
             batch.delete(chatRef);
+
+            // Set participants' status back to 'online' so they can search again
+            for (const uid of participants) {
+                const userRef = doc(firestore, 'users', uid);
+                batch.update(userRef, { status: 'online' });
+            }
 
             await batch.commit();
         }

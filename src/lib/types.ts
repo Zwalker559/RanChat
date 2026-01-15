@@ -1,14 +1,13 @@
-import type {FieldValue, Timestamp} from 'firebase/firestore';
 
-export type UserPreferences = {
-    gender: 'male' | 'female';
-    matchPreference: 'male' | 'female' | 'both';
-};
+import type {FieldValue, Timestamp} from 'firebase/firestore';
 
 export type User = {
     uid: string;
     username: string;
-    preferences: UserPreferences;
+    gender: 'male' | 'female';
+    matchPreference: 'male' | 'female' | 'both';
+    isMicOn: boolean;
+    isCamOn: boolean;
     status: 'online' | 'searching' | 'in-chat' | 'offline';
     createdAt: FieldValue;
     chatId?: string;

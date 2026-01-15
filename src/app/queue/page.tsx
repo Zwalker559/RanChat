@@ -1,3 +1,4 @@
+
 "use client";
 import {useRouter} from 'next/navigation';
 import {useEffect, useCallback, useRef} from 'react';
@@ -52,16 +53,18 @@ export default function QueuePage() {
     updateUserStatus(user.uid, 'searching');
     
     const searchForPartner = async () => {
-      // Prevent searching if a match is already being processed
-      if (matchFound.current) return;
-      const match = await findPartner(user.uid, appUser.preferences);
+      if (matchFound.current || !appUser) return;
+      const match = await findPartner(user.uid, appUser);
       if (match) {
         matchFound.current = true;
         router.push(`/chat?chatId=${match.chatId}&partnerUid=${match.partnerUid}&caller=true`);
       }
     }
 
-    searchForPartner();
+    // Initial search
+    const searchInterval = setInterval(() => {
+        searchForPartner();
+    }, 5000); // Try to find a partner every 5 seconds
 
     const unsubscribePartnerListener = listenForPartner(user.uid, (chatId, partnerUid) => {
         if (chatId && partnerUid && !matchFound.current) {
@@ -71,17 +74,10 @@ export default function QueuePage() {
     });
 
     return () => {
+      clearInterval(searchInterval);
       unsubscribePartnerListener();
       
-      // Only run cleanup if the user is explicitly cancelling or navigating away without a match.
-      if (!matchFound.current && user) {
-        if (isCancelling.current) {
-          // The handleCancel function already takes care of deletion.
-          // This is just to prevent the status update below from running.
-          return;
-        }
-        
-        // If unmounting without finding a match (e.g. back button), set status to online.
+      if (!matchFound.current && user && !isCancelling.current) {
         const checkStatusAndSetOnline = async () => {
           const latestUser = await getUser(user.uid);
           if (latestUser && latestUser.status === 'searching') {
@@ -99,7 +95,7 @@ export default function QueuePage() {
       <h1 className="text-2xl font-semibold text-muted-foreground animate-pulse">
         Searching for a partner...
       </h1>
-      <Button onClick={handleCancel} variant="link" className="text-muted-foreground">Cancel</Button>
+      <Button onClick={handleCancel} variant="link" className="text-muted-foreground">Cancel and Exit</Button>
     </div>
   );
 }
