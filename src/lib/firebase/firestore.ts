@@ -47,6 +47,7 @@ export const isUsernameTaken = async (username: string): Promise<boolean> => {
 };
 
 export const getUser = async (uid: string): Promise<User | null> => {
+  if (!uid) return null;
   const userRef = doc(firestore, 'users', uid);
   const userSnap = await getDoc(userRef);
   return userSnap.exists() ? (userSnap.data() as User) : null;
@@ -56,14 +57,15 @@ export const deleteUser = async (uid: string) => {
     if (!uid) return;
     try {
       const userRef = doc(firestore, 'users', uid);
-      await deleteDoc(userRef);
       const activeUserRef = doc(firestore, 'active_users', uid);
-      await deleteDoc(activeUserRef);
       const queueRef = doc(firestore, 'queue', uid);
-      const queueSnap = await getDoc(queueRef);
-      if (queueSnap.exists()) {
-        await deleteDoc(queueRef);
-      }
+
+      const batch = writeBatch(firestore);
+      batch.delete(userRef);
+      batch.delete(activeUserRef);
+      batch.delete(queueRef);
+      
+      await batch.commit();
     } catch(e) {
       console.error("Error deleting user from firestore", e);
     }

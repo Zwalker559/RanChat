@@ -34,12 +34,16 @@ export default function QueuePage() {
             toast({ variant: "destructive", title: "Error", description: "Could not delete your account." });
         }
     }
+    // Regardless of user state, always redirect to home on cancel.
     router.push('/');
   }, [user, auth, router, toast]);
 
   useEffect(() => {
     if (!user || !appUser) {
-        if (!user && !auth?.currentUser) router.push('/');
+        // If auth is still loading, wait. If it's done and there's no user, go home.
+        if (!auth?.currentUser && !user) {
+            router.push('/');
+        }
         return;
     };
     
@@ -64,8 +68,17 @@ export default function QueuePage() {
       unsubscribe();
       // If user is still in searching state and navigates away (but doesn't cancel),
       // update their status so they are not stuck in the queue.
+      // We check for user existence because this can run during unmount after cancellation.
       if (user) {
-        updateUserStatus(user.uid, 'online');
+        // Use getDoc to check current status before overriding
+        // This avoids race conditions where a user gets a match then navigates away
+        const checkStatusAndSetOnline = async () => {
+          const latestUser = await getUser(user.uid);
+          if (latestUser && latestUser.status === 'searching') {
+            updateUserStatus(user.uid, 'online');
+          }
+        }
+        checkStatusAndSetOnline();
       }
     };
   }, [user, appUser, router, auth]);
