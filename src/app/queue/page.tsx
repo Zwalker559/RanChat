@@ -107,9 +107,9 @@ export default function QueuePage() {
     return () => {
       unsubscribePartnerListener();
       
-      // If we navigate away (e.g. cancel button) and haven't found a match, go offline.
+      // If we navigate away without finding a match (e.g. back button), go offline.
       if (!matchFound.current && user && !isCancelling.current) {
-        updateUserStatus(user.uid, 'online'); // Set to online, not offline, so they can re-enter queue from home page.
+        updateUserStatus(user.uid, 'offline');
       }
     };
   }, [user, appUser, router, auth]);
@@ -124,5 +124,3 @@ export default function QueuePage() {
     </div>
   );
 }
-
-    

@@ -8,7 +8,7 @@ export type User = {
     matchPreference: 'male' | 'female' | 'both';
     isMicOn: boolean;
     isCamOn: boolean;
-    status: 'online' | 'searching' | 'in-chat' | 'offline';
+    status: 'searching' | 'in-chat' | 'offline';
     createdAt: FieldValue;
     chatId?: string;
 };

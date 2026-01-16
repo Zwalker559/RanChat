@@ -30,7 +30,7 @@ export const createUser = async (
   const userRef = doc(firestore, 'users', uid);
   const newUser: Omit<User, 'uid'> & { createdAt: any } = {
     ...userData,
-    status: 'online',
+    status: 'offline',
     createdAt: serverTimestamp(),
   };
   await setDoc(userRef, newUser, { merge: true });
