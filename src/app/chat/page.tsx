@@ -8,11 +8,10 @@ import { useAuth } from '@/hooks/use-auth';
 import { VideoPlayer } from '@/components/chat/video-player';
 import { ChatWindow } from '@/components/chat/chat-window';
 import { ChatControls } from '@/components/chat/chat-controls';
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Maximize, Minimize } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { createOffer, listenForOffer, createAnswer, listenForAnswer, addIceCandidate, listenForIceCandidates, endChat, updateUserStatus, getUser, getChatDoc, deleteUser as deleteFirestoreUser, updateUser } from '@/lib/firebase/firestore';
+import { createOffer, listenForOffer, createAnswer, listenForAnswer, addIceCandidate, listenForIceCandidates, endChat, updateUserStatus, getChatDoc, deleteUser as deleteFirestoreUser, updateUser } from '@/lib/firebase/firestore';
 import { Unsubscribe, onSnapshot, doc } from 'firebase/firestore';
 import { firestore } from '@/lib/firebase/config';
 import { deleteUser as deleteAuthUser } from 'firebase/auth';
@@ -35,20 +34,17 @@ function ChatPageContent() {
 
   const [isMicOn, setIsMicOn] = useState(true);
   const [isCamOn, setIsCamOn] = useState(true);
-  const [isConnecting, setIsConnecting] = useState(false);
+  const [isConnecting, setIsConnecting] = useState(true);
   const [hasCameraPermission, setHasCameraPermission] = useState(true);
   const [hasMicPermission, setHasMicPermission] = useState(true);
   const [isLocalVideoMinimized, setIsLocalVideoMinimized] = useState(false);
   const [chatId, setChatId] = useState<string | null>(null);
-  const [partnerUid, setPartnerUid] = useState<string | null>(null);
   const [partner, setPartner] = useState<AppUser | null>(null);
 
   const localVideoRef = useRef<HTMLVideoElement>(null);
   const remoteVideoRef = useRef<HTMLVideoElement>(null);
   const pc = useRef<RTCPeerConnection | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
-  
-  const firestoreUnsubscribers = useRef<Unsubscribe[]>([]);
   const isUnloading = useRef(false);
 
   const cleanup = useCallback(async (options: {endChatSession?: boolean, isNext?: boolean} = {}) => {
@@ -56,12 +52,14 @@ function ChatPageContent() {
     console.log("Cleaning up chat session...");
     isUnloading.current = true;
 
-    firestoreUnsubscribers.current.forEach(unsub => unsub());
-    firestoreUnsubscribers.current = [];
-
+    // Stop all Firestore listeners by re-initializing the ref
+    // The main useEffect cleanup will handle specific unsubs
+    
     if (pc.current) {
       pc.current.ontrack = null;
       pc.current.onicecandidate = null;
+      pc.current.onconnectionstatechange = null;
+      pc.current.oniceconnectionstatechange = null;
       pc.current.close();
       pc.current = null;
     }
@@ -74,8 +72,9 @@ function ChatPageContent() {
     if (localVideoRef.current) localVideoRef.current.srcObject = null;
     if (remoteVideoRef.current) remoteVideoRef.current.srcObject = null;
 
-    if (chatId && endChatSession) {
-      await endChat(chatId);
+    const currentChatId = chatId;
+    if (currentChatId && endChatSession) {
+      await endChat(currentChatId);
     }
     
     if (user && !isNext) {
@@ -83,113 +82,22 @@ function ChatPageContent() {
     }
 
     setChatId(null);
-    setPartnerUid(null);
     setPartner(null);
-    setIsConnecting(false);
     isUnloading.current = false;
   }, [chatId, user]);
 
-
-  const startWebRTC = useCallback(async (isCaller: boolean, currentChatId: string, currentPartnerUid: string) => {
-    if (!user || !auth) return;
-    
-    setIsConnecting(false); 
-    setChatId(currentChatId);
-    setPartnerUid(currentPartnerUid);
-
-    const partnerDocUnsub = onSnapshot(doc(firestore, 'users', currentPartnerUid), (docSnap) => {
-        if (docSnap.exists()) {
-            setPartner(docSnap.data() as AppUser);
-        } else {
-            setPartner(null);
-        }
-    });
-    firestoreUnsubscribers.current.push(partnerDocUnsub);
-
-    pc.current = new RTCPeerConnection(servers);
-
-    if (localStreamRef.current) {
-        localStreamRef.current.getTracks().forEach(track => {
-            pc.current!.addTrack(track, localStreamRef.current!);
-        });
-    }
-
-    pc.current.ontrack = event => {
-      if (remoteVideoRef.current && event.streams[0]) {
-        remoteVideoRef.current.srcObject = event.streams[0];
-      }
-    };
-    
-    pc.current.onicecandidate = event => {
-        event.candidate && addIceCandidate(currentChatId, user.uid, event.candidate.toJSON());
-    };
-
-    if (isCaller) {
-        if (pc.current.localDescription) return;
-        const offerDescription = await pc.current.createOffer();
-        if (pc.current.localDescription) return;
-        await pc.current.setLocalDescription(offerDescription);
-        await createOffer(currentChatId, user.uid, { type: offerDescription.type, sdp: offerDescription.sdp });
-        
-        const unsub = listenForAnswer(currentChatId, currentPartnerUid, async (answer) => {
-            if (pc.current && !pc.current.currentRemoteDescription) {
-                const answerDescription = new RTCSessionDescription(answer);
-                await pc.current.setRemoteDescription(answerDescription);
-            }
-        });
-        firestoreUnsubscribers.current.push(unsub);
-    } else { 
-        const unsub = listenForOffer(currentChatId, currentPartnerUid, async (offer) => {
-            if (pc.current && !pc.current.remoteDescription) {
-                await pc.current.setRemoteDescription(new RTCSessionDescription(offer));
-                if (pc.current.localDescription) return;
-                const answerDescription = await pc.current.createAnswer();
-                if (pc.current.localDescription) return;
-                await pc.current.setLocalDescription(answerDescription);
-                await createAnswer(currentChatId, user.uid, { type: answerDescription.type, sdp: answerDescription.sdp });
-            }
-        });
-        firestoreUnsubscribers.current.push(unsub);
-    }
-    
-    const unsubIce = listenForIceCandidates(currentChatId, currentPartnerUid, (candidate) => {
-        pc.current?.addIceCandidate(new RTCIceCandidate(candidate));
-    });
-    firestoreUnsubscribers.current.push(unsubIce);
-    
-    const chatDocUnsub = onSnapshot(doc(firestore, 'chats', currentChatId), async (docSnap) => {
-        if (!docSnap.exists() && !isUnloading.current) {
-            console.log("Chat has been ended by partner or deletion.");
-            toast({ title: "Partner has disconnected", description: "Finding a new partner..." });
-            await cleanup({ endChatSession: false, isNext: true });
-            router.push('/queue');
-        }
-    });
-    firestoreUnsubscribers.current.push(chatDocUnsub);
-
-  }, [user, auth, toast, cleanup, router]);
-
-
   const startMedia = useCallback(async () => {
-    if (localStreamRef.current) return localStreamRef.current;
-    let stream = null;
+    let stream: MediaStream | null = null;
     try {
         stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-        localStreamRef.current = stream;
-        if (localVideoRef.current) {
-            localVideoRef.current.srcObject = stream;
-        }
         setHasCameraPermission(true);
         setHasMicPermission(true);
     } catch (error: any) {
         console.error('Error accessing media devices:', error);
-        if (error.name === 'NotAllowedError' || error.name === 'PermissionDeniedError') {
-            setHasCameraPermission(false);
-            setHasMicPermission(false);
-        }
+        setHasCameraPermission(false);
+        setHasMicPermission(false);
         setIsCamOn(false);
         setIsMicOn(false);
-        setIsConnecting(false);
     }
     return stream;
   }, []);
@@ -252,37 +160,112 @@ function ChatPageContent() {
   }, [appUser]);
 
   useEffect(() => {
+    if (!user || !appUser) {
+        if(!user && !auth?.currentUser) {
+            router.push('/');
+        }
+        return;
+    }
+
+    let isCancelled = false;
+    const localUnsubscribers: Unsubscribe[] = [];
+
     const initializeChat = async () => {
-        if (!user || !appUser) return;
+        setIsConnecting(true);
+
+        const stream = await startMedia();
+        if (isCancelled) return;
+
+        localStreamRef.current = stream;
+        if (localVideoRef.current && stream) {
+            localVideoRef.current.srcObject = stream;
+        }
 
         const urlChatId = searchParams.get('chatId');
         const urlPartnerUid = searchParams.get('partnerUid');
-        const urlIsCaller = searchParams.get('caller') === 'true';
+        const isCaller = searchParams.get('caller') === 'true';
 
-        if (urlChatId && urlPartnerUid) {
-            const chatDoc = await getChatDoc(urlChatId);
-            if (chatDoc) {
-                // Ensure our status reflects the media settings for the new call
-                await updateUser(user.uid, { isCamOn: appUser.isCamOn, isMicOn: appUser.isMicOn });
-                startWebRTC(urlIsCaller, urlChatId, urlPartnerUid);
+        if (!urlChatId || !urlPartnerUid) {
+            router.push('/queue');
+            return;
+        }
+        
+        await updateUser(user.uid, { isCamOn, isMicOn });
+
+        setChatId(urlChatId);
+        
+        const peerConnection = new RTCPeerConnection(servers);
+        pc.current = peerConnection;
+
+        if (stream) {
+            for (const track of stream.getTracks()) {
+                peerConnection.addTrack(track, stream);
+            }
+        }
+        
+        peerConnection.oniceconnectionstatechange = () => console.log(`ICE Connection State: ${peerConnection.iceConnectionState}`);
+        peerConnection.onconnectionstatechange = () => console.log(`Connection State: ${peerConnection.connectionState}`);
+        
+        peerConnection.ontrack = (event) => {
+            if (remoteVideoRef.current) {
+                remoteVideoRef.current.srcObject = event.streams[0];
+            }
+        };
+
+        peerConnection.onicecandidate = (event) => {
+            event.candidate && addIceCandidate(urlChatId, user.uid, event.candidate.toJSON());
+        };
+
+        localUnsubscribers.push(onSnapshot(doc(firestore, 'users', urlPartnerUid), (docSnap) => {
+            if (docSnap.exists()) {
+                setPartner(docSnap.data() as AppUser);
             } else {
-                toast({ title: "Chat not found", description: "The chat you were looking for doesn't exist. Finding a new partner." });
+                setPartner(null);
+            }
+        }));
+
+        localUnsubscribers.push(listenForIceCandidates(urlChatId, urlPartnerUid, (candidate) => {
+            peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
+        }));
+
+        localUnsubscribers.push(onSnapshot(doc(firestore, 'chats', urlChatId), async (docSnap) => {
+            if (!docSnap.exists() && !isUnloading.current) {
+                toast({ title: "Partner has disconnected", description: "Finding a new partner..." });
+                await cleanup({ endChatSession: false, isNext: true });
                 router.push('/queue');
             }
+        }));
+
+        if (isCaller) {
+            localUnsubscribers.push(listenForAnswer(urlChatId, urlPartnerUid, async (answer) => {
+                if (peerConnection.currentRemoteDescription) return;
+                await peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
+            }));
+
+            const offerDescription = await peerConnection.createOffer();
+            await peerConnection.setLocalDescription(offerDescription);
+            await createOffer(urlChatId, user.uid, { type: offerDescription.type, sdp: offerDescription.sdp });
         } else {
-            router.push('/queue');
+            localUnsubscribers.push(listenForOffer(urlChatId, urlPartnerUid, async (offer) => {
+                if (peerConnection.remoteDescription) return;
+                await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
+                const answerDescription = await peerConnection.createAnswer();
+                await peerConnection.setLocalDescription(answerDescription);
+                await createAnswer(urlChatId, user.uid, { type: answerDescription.type, sdp: answerDescription.sdp });
+            }));
         }
+
+        setIsConnecting(false);
     };
 
-    if (user && appUser) {
-        startMedia().then(() => {
-            initializeChat();
-        });
-    } else if(!user && !auth?.currentUser) {
-        router.push('/');
-    }
+    initializeChat();
 
-  }, [user, appUser, searchParams, startMedia, router, startWebRTC, toast, auth]);
+    return () => {
+        isCancelled = true;
+        localUnsubscribers.forEach(unsub => unsub());
+        cleanup({ endChatSession: false }); // Don't delete chat doc on fast-refresh/re-render
+    };
+  }, [user, appUser]);
 
   const handleToggleMic = () => {
     if (!hasMicPermission) return;
@@ -319,7 +302,7 @@ function ChatPageContent() {
                 isConnecting={isConnecting || !partner}
                 className="h-full"
             >
-              <video ref={remoteVideoRef} className={cn("w-full h-full object-cover", !partner?.isCamOn && 'invisible')} autoPlay playsInline />
+              <video ref={remoteVideoRef} className={cn("w-full h-full object-cover")} autoPlay playsInline />
             </VideoPlayer>
           </div>
           

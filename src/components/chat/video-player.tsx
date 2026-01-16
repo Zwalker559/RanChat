@@ -13,14 +13,16 @@ export function VideoPlayer({ name, isMuted, isCamOff, isConnecting, className, 
 
   return (
     <div className={cn("relative aspect-video w-full overflow-hidden rounded-lg bg-secondary shadow-lg", className)} {...props}>
-      {children}
+      <div className={cn("w-full h-full", showOverlay && "invisible")}>
+        {children}
+      </div>
 
       {showOverlay && (
         <div className="absolute inset-0 flex h-full w-full flex-col items-center justify-center bg-secondary text-muted-foreground p-4">
           {isConnecting ? (
             <>
               <Loader2 className="h-8 w-8 md:h-12 md:w-12 animate-spin text-accent" />
-              <p className="mt-2 md:mt-4 text-sm md:text-base text-center">Finding next match...</p>
+              <p className="mt-2 md:mt-4 text-sm md:text-base text-center">Connecting...</p>
             </>
           ) : isCamOff ? (
             <VideoOff className="h-8 w-8 md:h-12 md:w-12" />
