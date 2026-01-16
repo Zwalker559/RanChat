@@ -186,7 +186,6 @@ function ChatPageContent() {
         if (error.name === 'NotAllowedError' || error.name === 'PermissionDeniedError') {
             setHasCameraPermission(false);
             setHasMicPermission(false);
-            // Don't toast here to avoid rapid errors
         }
         setIsCamOn(false);
         setIsMicOn(false);
@@ -263,6 +262,8 @@ function ChatPageContent() {
         if (urlChatId && urlPartnerUid) {
             const chatDoc = await getChatDoc(urlChatId);
             if (chatDoc) {
+                // Ensure our status reflects the media settings for the new call
+                await updateUser(user.uid, { isCamOn: appUser.isCamOn, isMicOn: appUser.isMicOn });
                 startWebRTC(urlIsCaller, urlChatId, urlPartnerUid);
             } else {
                 toast({ title: "Chat not found", description: "The chat you were looking for doesn't exist. Finding a new partner." });
@@ -318,7 +319,7 @@ function ChatPageContent() {
                 isConnecting={isConnecting || !partner}
                 className="h-full"
             >
-              <video ref={remoteVideoRef} className="w-full h-full object-cover" autoPlay playsInline />
+              <video ref={remoteVideoRef} className={cn("w-full h-full object-cover", !partner?.isCamOn && 'invisible')} autoPlay playsInline />
             </VideoPlayer>
           </div>
           
@@ -333,7 +334,7 @@ function ChatPageContent() {
                   isCamOff={!isCamOn || !hasCameraPermission}
                   className="h-full"
                 >
-                  <video ref={localVideoRef} className="w-full h-full object-cover" autoPlay muted playsInline />
+                  <video ref={localVideoRef} className={cn("w-full h-full object-cover", !isCamOn && 'invisible')} autoPlay muted playsInline />
                 </VideoPlayer>
                 <Button 
                     size="icon" 

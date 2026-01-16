@@ -13,10 +13,7 @@ export function VideoPlayer({ name, isMuted, isCamOff, isConnecting, className, 
 
   return (
     <div className={cn("relative aspect-video w-full overflow-hidden rounded-lg bg-secondary shadow-lg", className)} {...props}>
-      {/* The video element is now always part of the DOM, but hidden from view when the overlay is active. This ensures the video ref is always available for WebRTC. */}
-      <div className={cn("w-full h-full", showOverlay ? 'invisible' : 'visible')}>
-        {children}
-      </div>
+      {children}
 
       {showOverlay && (
         <div className="absolute inset-0 flex h-full w-full flex-col items-center justify-center bg-secondary text-muted-foreground p-4">
