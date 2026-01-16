@@ -186,18 +186,13 @@ function ChatPageContent() {
         if (error.name === 'NotAllowedError' || error.name === 'PermissionDeniedError') {
             setHasCameraPermission(false);
             setHasMicPermission(false);
-            toast({
-                variant: 'destructive',
-                title: 'Media Access Denied',
-                description: 'Please enable camera and microphone permissions in your browser settings.',
-            });
         }
         setIsCamOn(false);
         setIsMicOn(false);
         setIsConnecting(false);
     }
     return stream;
-  }, [toast]);
+  }, []);
   
   useEffect(() => {
     if (localStreamRef.current) {
