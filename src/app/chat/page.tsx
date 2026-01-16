@@ -60,61 +60,70 @@ function ChatPageContent() {
   const remoteStreamRef = useRef<MediaStream | null>(null);
   const isUnloading = useRef(false);
 
+  // Get stable chat parameters from the URL
+  const chatId = searchParams.get('chatId');
+  const partnerUid = searchParams.get('partnerUid');
+  const isCaller = searchParams.get('caller') === 'true';
+
   // This is the main setup and teardown effect. It's designed to run ONCE per chat session.
   useEffect(() => {
-    if (!user) return; // Wait for authentication to complete
-
-    // Get stable chat parameters from the URL
-    const urlChatId = searchParams.get('chatId');
-    const urlPartnerUid = searchParams.get('partnerUid');
-    const isCaller = searchParams.get('caller') === 'true';
-
-    if (!urlChatId || !urlPartnerUid) {
-      router.push('/queue');
+    // Guard against running without essential info
+    if (!user || !chatId || !partnerUid) {
       return;
     }
 
     let isCancelled = false;
     const unsubscribers: Unsubscribe[] = [];
-
+    
     const setupChat = async () => {
       setIsConnecting(true);
+      isUnloading.current = false;
 
-      // 1. Get User Media
+      // 1. Initialize WebRTC
+      pc.current = new RTCPeerConnection(servers);
+
+      // 2. Initialize remote stream and attach to video element immediately
+      // This prevents a race condition where the track arrives before the element is ready.
+      remoteStreamRef.current = new MediaStream();
+      if (remoteVideoRef.current) {
+        remoteVideoRef.current.srcObject = remoteStreamRef.current;
+      }
+      
+      // 3. Get User Media and setup local stream
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-        if (isCancelled) { stream.getTracks().forEach(t => t.stop()); return; }
+        if (isCancelled) { 
+          stream.getTracks().forEach(t => t.stop()); 
+          return; 
+        }
         
         localStreamRef.current = stream;
-        if (localVideoRef.current) localVideoRef.current.srcObject = stream;
+
+        // Attach local stream to video element
+        if (localVideoRef.current) {
+          localVideoRef.current.srcObject = stream;
+        }
         
-        // Sync media tracks with the initial state
+        // Sync media tracks with the initial state from component state
         stream.getVideoTracks().forEach(t => t.enabled = isCamOn);
         stream.getAudioTracks().forEach(t => t.enabled = isMicOn);
+
+        // Add local tracks to the connection BEFORE creating the offer
+        stream.getTracks().forEach(track => {
+          pc.current!.addTrack(track, stream);
+        });
 
         setHasCameraPermission(true);
         setHasMicPermission(true);
       } catch (error) {
         console.error("Error accessing media devices:", error);
+        // Only set permissions to false, don't toast, show UI instead.
         setHasCameraPermission(false);
         setHasMicPermission(false);
-        setIsCamOn(false);
-        setIsMicOn(false);
+        // We can continue without local media, the user can still watch.
       }
       
-      // 2. Initialize WebRTC
-      pc.current = new RTCPeerConnection(servers);
-      remoteStreamRef.current = new MediaStream();
-      if (remoteVideoRef.current) remoteVideoRef.current.srcObject = remoteStreamRef.current;
-
-      // Add local tracks to the connection BEFORE creating the offer
-      if (localStreamRef.current) {
-        localStreamRef.current.getTracks().forEach(track => {
-          pc.current!.addTrack(track, localStreamRef.current!);
-        });
-      }
-
-      // 3. Setup WebRTC event handlers
+      // 4. Setup WebRTC event handlers
       pc.current.ontrack = (event) => {
         event.streams[0].getTracks().forEach(track => {
           remoteStreamRef.current?.addTrack(track);
@@ -123,28 +132,36 @@ function ChatPageContent() {
       
       pc.current.onicecandidate = event => {
         if (event.candidate) {
-          addIceCandidate(urlChatId, user.uid, event.candidate.toJSON());
+          addIceCandidate(chatId, user.uid, event.candidate.toJSON());
         }
       };
 
-      // 4. Setup Firestore Listeners
+      // 5. Setup Firestore Listeners
+      // Listen for partner's metadata (name, cam/mic status)
       unsubscribers.push(
-        onSnapshot(doc(firestore, 'users', urlPartnerUid), (docSnap) => {
-          if (docSnap.exists()) setPartner(docSnap.data() as AppUser);
-          else setPartner(null);
+        onSnapshot(doc(firestore, 'users', partnerUid), (docSnap) => {
+          if (docSnap.exists()) {
+            setPartner(docSnap.data() as AppUser);
+          } else {
+            setPartner(null); // Partner document deleted
+          }
         })
       );
       
+      // Listen for ICE candidates from partner
       unsubscribers.push(
-        listenForIceCandidates(urlChatId, urlPartnerUid, (candidate) => {
-          if (pc.current?.remoteDescription || isCaller) {
+        listenForIceCandidates(chatId, partnerUid, (candidate) => {
+           // Only add candidates after the remote description is set
+          if (pc.current?.remoteDescription) {
             pc.current?.addIceCandidate(new RTCIceCandidate(candidate));
           }
         })
       );
       
+      // Listen for chat deletion (partner disconnected)
       unsubscribers.push(
-        onSnapshot(doc(firestore, 'chats', urlChatId), (docSnap) => {
+        onSnapshot(doc(firestore, 'chats', chatId), (docSnap) => {
+          // If doc doesn't exist and we are not the one who triggered the unload
           if (!docSnap.exists() && !isUnloading.current) {
              toast({ title: "Partner has disconnected", description: "Finding a new partner..." });
              router.push('/queue');
@@ -152,28 +169,32 @@ function ChatPageContent() {
         })
       );
 
-      // 5. Signaling Logic (Offer/Answer Handshake)
+      // 6. Signaling Logic (Offer/Answer Handshake)
       if (isCaller) {
-        unsubscribers.push(listenForAnswer(urlChatId, urlPartnerUid, async (answer) => {
+        // Listen for the answer from the callee
+        unsubscribers.push(listenForAnswer(chatId, partnerUid, async (answer) => {
             if (pc.current && !pc.current.currentRemoteDescription) {
                 await pc.current.setRemoteDescription(new RTCSessionDescription(answer));
             }
         }));
+        
+        // Create and send the offer
         const offer = await pc.current.createOffer();
         await pc.current.setLocalDescription(offer);
-        await createOffer(urlChatId, user.uid, { type: offer.type, sdp: offer.sdp });
+        await createOffer(chatId, user.uid, { type: offer.type, sdp: offer.sdp });
       } else { // Callee
-        unsubscribers.push(listenForOffer(urlChatId, urlPartnerUid, async (offer) => {
+        // Listen for the offer from the caller
+        unsubscribers.push(listenForOffer(chatId, partnerUid, async (offer) => {
             if (pc.current && !pc.current.remoteDescription) {
                 await pc.current.setRemoteDescription(new RTCSessionDescription(offer));
                 const answer = await pc.current.createAnswer();
                 await pc.current.setLocalDescription(answer);
-                await createAnswer(urlChatId, user.uid, { type: answer.type, sdp: answer.sdp });
+                await createAnswer(chatId, user.uid, { type: answer.type, sdp: answer.sdp });
             }
         }));
       }
 
-      // 6. Update own status in Firestore with initial media state
+      // 7. Update own status in Firestore with initial media state
       await updateUser(user.uid, { isCamOn, isMicOn });
 
       setIsConnecting(false);
@@ -181,7 +202,7 @@ function ChatPageContent() {
 
     setupChat();
     
-    // The single, robust cleanup function for when the component unmounts or chat ends
+    // The single, robust cleanup function
     return () => {
       isCancelled = true;
       console.log("Cleaning up chat session...");
@@ -189,21 +210,12 @@ function ChatPageContent() {
       unsubscribers.forEach(unsub => unsub());
 
       if (pc.current) {
-        // Detach event handlers
         pc.current.ontrack = null;
         pc.current.onicecandidate = null;
-        pc.current.onconnectionstatechange = null;
-        pc.current.oniceconnectionstatechange = null;
-
-        // Stop all senders and close the connection
-        pc.current.getSenders().forEach(sender => {
-          try { pc.current?.removeTrack(sender); } catch (e) { console.error("Error removing track", e)}
-        });
         pc.current.close();
         pc.current = null;
       }
 
-      // Stop all media tracks
       if (localStreamRef.current) {
         localStreamRef.current.getTracks().forEach(track => track.stop());
         localStreamRef.current = null;
@@ -213,110 +225,119 @@ function ChatPageContent() {
         remoteStreamRef.current = null;
       }
       
-      // Clean up video elements
       if (localVideoRef.current) localVideoRef.current.srcObject = null;
       if (remoteVideoRef.current) remoteVideoRef.current.srcObject = null;
 
-      // Clean up Firestore chat document if we are not navigating away due to page unload
-      if (!isUnloading.current && urlChatId) {
-          endChat(urlChatId);
+      // The 'Next' or 'Stop' buttons will have already deleted the chat doc.
+      // This cleanup only runs if the component unmounts unexpectedly (e.g. browser refresh)
+      if (!isUnloading.current && chatId) {
+          endChat(chatId);
+          if (user) {
+              updateUserStatus(user.uid, 'offline');
+          }
       }
     };
-  // This dependency array is critical. It ensures the setup logic runs only ONCE when the user is authenticated.
+  // This effect MUST re-run if the user, chatId, or partner changes.
+  // Other values are stable or handled by component state.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user]);
+  }, [user, chatId, partnerUid, isCaller]);
+
 
   // --- User Actions ---
   const handleToggleMic = useCallback(() => {
-    if (!hasMicPermission) return;
-    const newMicState = !isMicOn;
-    setIsMicOn(newMicState);
-    localStreamRef.current?.getAudioTracks().forEach(t => t.enabled = newMicState);
-    if (user) {
-        updateUser(user.uid, { isMicOn: newMicState });
-        localStorage.setItem('ran-chat-mic-on', JSON.stringify(newMicState));
-    }
-  }, [isMicOn, hasMicPermission, user]);
+    setIsMicOn(prev => {
+        const newMicState = !prev;
+        localStreamRef.current?.getAudioTracks().forEach(t => t.enabled = newMicState);
+        if (user) {
+            updateUser(user.uid, { isMicOn: newMicState });
+            localStorage.setItem('ran-chat-mic-on', JSON.stringify(newMicState));
+        }
+        return newMicState;
+    });
+  }, [user]);
 
   const handleToggleCam = useCallback(() => {
-    if (!hasCameraPermission) return;
-    const newCamState = !isCamOn;
-    setIsCamOn(newCamState);
-    localStreamRef.current?.getVideoTracks().forEach(t => t.enabled = newCamState);
-    if (user) {
-        updateUser(user.uid, { isCamOn: newCamState });
-        localStorage.setItem('ran-chat-cam-on', JSON.stringify(newCamState));
-    }
-  }, [isCamOn, hasCameraPermission, user]);
+    setIsCamOn(prev => {
+        const newCamState = !prev;
+        localStreamRef.current?.getVideoTracks().forEach(t => t.enabled = newCamState);
+        if (user) {
+            updateUser(user.uid, { isCamOn: newCamState });
+            localStorage.setItem('ran-chat-cam-on', JSON.stringify(newCamState));
+        }
+        return newCamState;
+    });
+  }, [user]);
 
   const handleNext = useCallback(async () => {
-    isUnloading.current = true; // prevent cleanup from running endChat again
-    const chatId = searchParams.get('chatId');
-
-    // First, end the current chat
+    isUnloading.current = true; // prevent cleanup from running endChat
+    
+    // End the current chat session, which will trigger the partner's listener to redirect
     if (chatId) {
       await endChat(chatId);
     }
 
-    // Then, put self back into the queue
+    // Then, put self back into the queue and navigate
     if (user && appUser) {
       await updateUserStatus(user.uid, 'searching');
       // We need to omit fields that are not part of the queue data
       const { uid, createdAt, ...queueData } = appUser;
       await addUserToQueue(user.uid, { ...queueData, status: 'searching' });
+      router.push('/queue');
+    } else {
+      // Fallback if user data is missing for some reason
+      router.push('/');
     }
-
-    // Finally, navigate to the queue page
-    router.push('/queue');
-  }, [searchParams, user, appUser, router]);
+  }, [chatId, user, appUser, router]);
   
   const fullUserDelete = useCallback(async () => {
     if (user && auth?.currentUser) {
-        isUnloading.current = true;
-        const chatId = searchParams.get('chatId');
         if (chatId) await endChat(chatId);
         
         try {
             await deleteFirestoreUser(user.uid);
             await deleteAuthUser(auth.currentUser);
-            console.log("Anonymous user account and data deleted successfully.");
         } catch (error) {
             console.error("Error deleting anonymous user:", error);
         }
     }
-  }, [user, auth, searchParams]);
+  }, [user, auth, chatId]);
 
   const handleStop = async () => {
+    isUnloading.current = true; // Mark as intentional unload
     await fullUserDelete();
     router.push("/");
   };
   
   useEffect(() => {
     const handleBeforeUnload = () => {
-      // Don't run the full delete if we are intentionally navigating away
-      // or a match was found, as other cleanup logic will handle it.
+      // This is a "best-effort" fire-and-forget attempt on browser close.
       if (isUnloading.current) return;
-      
-      const chatId = searchParams.get('chatId');
       if (chatId) endChat(chatId);
       if (user) updateUserStatus(user.uid, 'offline');
     };
     window.addEventListener('beforeunload', handleBeforeUnload);
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user, searchParams]);
+  }, [user, chatId]);
 
+  // If params are not ready yet, show a loading state to prevent redirect loops.
+  if (!chatId || !partnerUid) {
+    return (
+        <div className="flex h-screen w-full items-center justify-center bg-background">
+            <p className="text-muted-foreground animate-pulse">Initializing Chat...</p>
+        </div>
+    );
+  }
 
   return (
     <main className="grid h-screen max-h-screen grid-cols-1 lg:grid-cols-[1fr_400px] overflow-hidden">
       <div className="relative flex flex-col items-center justify-between p-4 bg-black/90 h-full">
         {(!hasCameraPermission || !hasMicPermission) && (
-            <Alert variant="destructive" className="mb-4">
+            <Alert variant="destructive" className="absolute top-4 left-4 right-4 w-auto z-50 max-w-md mx-auto">
               <AlertTitle>Permissions Denied</AlertTitle>
               <AlertDescription>
                 { !hasCameraPermission && 'Camera access has been denied. ' }
                 { !hasMicPermission && 'Microphone access has been denied. ' }
-                 Please grant permissions in your browser settings to share your video and audio. You can still watch your partner's stream.
+                 Please grant permissions in your browser settings. You can still watch and text chat.
               </AlertDescription>
             </Alert>
         )}
@@ -325,14 +346,14 @@ function ChatPageContent() {
           isLocalVideoMinimized ? "grid-rows-1" : "grid-rows-[1fr_auto] md:grid-rows-1 md:grid-cols-[1fr_300px]"
         )}>
           <div className="relative group/videoplayer w-full h-full min-h-0">
-            <VideoPlayer
+             <VideoPlayer
                 name={partner?.username || 'Stranger'}
                 isMuted={!partner?.isMicOn}
                 isCamOff={!partner?.isCamOn}
                 isConnecting={isConnecting || !partner}
                 className="h-full"
             >
-              <video ref={remoteVideoRef} className={cn("w-full h-full object-cover", !partner?.isCamOn && 'invisible')} autoPlay playsInline />
+              <video ref={remoteVideoRef} className="w-full h-full object-cover" autoPlay playsInline />
             </VideoPlayer>
           </div>
           
@@ -344,10 +365,10 @@ function ChatPageContent() {
                 <VideoPlayer
                   name={appUser?.username || "You"}
                   isMuted={!isMicOn}
-                  isCamOff={!isCamOn || !hasCameraPermission}
+                  isCamOff={!isCamOn}
                   className="h-full"
                 >
-                  <video ref={localVideoRef} className={cn("w-full h-full object-cover", !isCamOn && 'invisible')} autoPlay muted playsInline />
+                  <video ref={localVideoRef} className="w-full h-full object-cover" autoPlay muted playsInline />
                 </VideoPlayer>
                 <Button 
                     size="icon" 
@@ -377,8 +398,8 @@ function ChatPageContent() {
         </div>
       </div>
       <div className="w-full lg:max-w-[400px] flex flex-col bg-card/50 backdrop-blur-sm border-l border-border h-full">
-        {user ? (
-          <ChatWindow chatId={searchParams.get('chatId')!} currentUserUid={user.uid} />
+        {user && chatId ? (
+          <ChatWindow chatId={chatId} currentUserUid={user.uid} />
         ) : (
           <div className="flex-1 flex items-center justify-center text-muted-foreground">
             <p>Waiting for chat to start...</p>
@@ -397,3 +418,5 @@ export default function ChatPage() {
         </Suspense>
     )
 }
+
+    

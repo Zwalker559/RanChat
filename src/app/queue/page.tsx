@@ -3,7 +3,7 @@
 import {useRouter} from 'next/navigation';
 import {useEffect, useCallback, useRef} from 'react';
 import {useAuth} from '@/hooks/use-auth';
-import {listenForPartner, updateUserStatus, deleteUser as deleteFirestoreUser, findPartner, getUser, addUserToQueue } from '@/lib/firebase/firestore';
+import {listenForPartner, updateUserStatus, deleteUser as deleteFirestoreUser, findPartner, addUserToQueue } from '@/lib/firebase/firestore';
 import { deleteUser as deleteAuthUser } from 'firebase/auth';
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/hooks/use-toast';
@@ -46,20 +46,17 @@ export default function QueuePage() {
     if (isCancelling.current) return;
     isCancelling.current = true;
     
-    // Set status to offline before deleting to prevent being found in queue
     if (user) await updateUserStatus(user.uid, 'offline');
-    await fullUserDelete();
-
-    toast({ title: "Search Cancelled", description: "Your anonymous account has been deleted." });
+    // No need to call fullUserDelete, user can sign back in later.
+    // Let's just take them home.
+    toast({ title: "Search Cancelled", description: "You have left the queue." });
     router.push('/');
-  }, [fullUserDelete, router, toast, user]);
+  }, [router, toast, user]);
 
   useEffect(() => {
     const handleBeforeUnload = async (e: BeforeUnloadEvent) => {
       if (isCancelling.current || matchFound.current) return;
       if (user) {
-        // This is a "best-effort" fire-and-forget attempt to clean up on browser close.
-        // We set to offline, which also removes from queue.
         updateUserStatus(user.uid, 'offline');
       }
     };
@@ -72,7 +69,8 @@ export default function QueuePage() {
 
   useEffect(() => {
     if (!user || !appUser) {
-        if (!auth?.currentUser && !user) {
+        // If auth is still loading, or user genuinely doesn't exist, wait or redirect.
+        if (!auth?.currentUser && !user && !auth.loading) {
             router.push('/');
         }
         return;
@@ -82,7 +80,7 @@ export default function QueuePage() {
     isCancelling.current = false;
     
     const enterQueueAndSearch = async () => {
-      // Ensure user status is 'searching' and they are in the queue collection
+      // Ensure user document exists and status is 'searching'
       await updateUserStatus(user.uid, 'searching');
       const { uid, createdAt, ...queueData } = appUser;
       await addUserToQueue(user.uid, { ...queueData, status: 'searching' });
@@ -95,8 +93,7 @@ export default function QueuePage() {
       }
     };
 
-    enterQueueAndSearch();
-
+    // This listener handles the case where we are chosen by someone else
     const unsubscribePartnerListener = listenForPartner(user.uid, (chatId, partnerUid) => {
         if (chatId && partnerUid && !matchFound.current) {
             matchFound.current = true;
@@ -104,22 +101,15 @@ export default function QueuePage() {
         }
     });
 
+    // Start the search process
+    enterQueueAndSearch();
+
     return () => {
       unsubscribePartnerListener();
       
-      // If we navigate away without finding a match (e.g. cancel button), set status to online
+      // If we navigate away (e.g. cancel button) and haven't found a match, go offline.
       if (!matchFound.current && user && !isCancelling.current) {
-        const checkStatusAndSetOnline = async () => {
-          const latestUserDoc = await getDoc(doc(firestore, 'users', user.uid));
-          if(latestUserDoc.exists()) {
-            const latestUser = latestUserDoc.data() as User;
-            // Only update if they are still 'searching', to avoid race conditions
-            if (latestUser && latestUser.status === 'searching') {
-              await updateUserStatus(user.uid, 'online');
-            }
-          }
-        };
-        checkStatusAndSetOnline();
+        updateUserStatus(user.uid, 'online'); // Set to online, not offline, so they can re-enter queue from home page.
       }
     };
   }, [user, appUser, router, auth]);
@@ -130,7 +120,9 @@ export default function QueuePage() {
       <h1 className="text-2xl font-semibold text-muted-foreground animate-pulse">
         Searching for a partner...
       </h1>
-      <Button onClick={handleCancel} variant="link" className="text-muted-foreground">Cancel and Exit</Button>
+      <Button onClick={handleCancel} variant="link" className="text-muted-foreground">Cancel and go home</Button>
     </div>
   );
 }
+
+    
