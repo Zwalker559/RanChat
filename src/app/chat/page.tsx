@@ -127,6 +127,7 @@ function ChatPageContent() {
     if (isCaller) {
         if (pc.current.localDescription) return;
         const offerDescription = await pc.current.createOffer();
+        if (pc.current.localDescription) return;
         await pc.current.setLocalDescription(offerDescription);
         await createOffer(currentChatId, user.uid, { type: offerDescription.type, sdp: offerDescription.sdp });
         
@@ -143,6 +144,7 @@ function ChatPageContent() {
                 await pc.current.setRemoteDescription(new RTCSessionDescription(offer));
                 if (pc.current.localDescription) return;
                 const answerDescription = await pc.current.createAnswer();
+                if (pc.current.localDescription) return;
                 await pc.current.setLocalDescription(answerDescription);
                 await createAnswer(currentChatId, user.uid, { type: answerDescription.type, sdp: answerDescription.sdp });
             }
@@ -177,8 +179,6 @@ function ChatPageContent() {
         if (localVideoRef.current) {
             localVideoRef.current.srcObject = stream;
         }
-        stream.getAudioTracks().forEach(t => t.enabled = isMicOn);
-        stream.getVideoTracks().forEach(t => t.enabled = isCamOn);
         setHasCameraPermission(true);
         setHasMicPermission(true);
     } catch (error: any) {
@@ -197,7 +197,14 @@ function ChatPageContent() {
         setIsConnecting(false);
     }
     return stream;
-  }, [toast, isMicOn, isCamOn]);
+  }, [toast]);
+  
+  useEffect(() => {
+    if (localStreamRef.current) {
+      localStreamRef.current.getAudioTracks().forEach(t => (t.enabled = isMicOn));
+      localStreamRef.current.getVideoTracks().forEach(t => (t.enabled = isCamOn));
+    }
+  }, [isMicOn, isCamOn]);
 
   const handleNext = useCallback(async () => {
     setIsConnecting(true);
@@ -260,7 +267,8 @@ function ChatPageContent() {
         if (urlChatId && urlPartnerUid) {
             const chatDoc = await getChatDoc(urlChatId);
             if (chatDoc) {
-                await updateUserStatus(user.uid, 'in-chat');
+                // Explicitly set user status and media state in Firestore upon entering a chat
+                await updateUser(user.uid, { status: 'in-chat', isCamOn, isMicOn });
                 startWebRTC(urlIsCaller, urlChatId, urlPartnerUid);
             } else {
                 toast({ title: "Chat not found", description: "The chat you were looking for doesn't exist. Finding a new partner." });
@@ -279,15 +287,12 @@ function ChatPageContent() {
         router.push('/');
     }
 
-  }, [user, appUser, searchParams, startMedia, router, startWebRTC, toast, auth]);
+  }, [user, appUser, searchParams, startMedia, router, startWebRTC, toast, auth, isCamOn, isMicOn]);
 
   const handleToggleMic = () => {
     if (!hasMicPermission) return;
     const newMicState = !isMicOn;
     setIsMicOn(newMicState);
-    if (localStreamRef.current) {
-        localStreamRef.current.getAudioTracks().forEach(t => t.enabled = newMicState);
-    }
     if (user) {
         updateUser(user.uid, { isMicOn: newMicState });
         localStorage.setItem('ran-chat-mic-on', JSON.stringify(newMicState));
@@ -298,9 +303,6 @@ function ChatPageContent() {
     if (!hasCameraPermission) return;
     const newCamState = !isCamOn;
     setIsCamOn(newCamState);
-    if (localStreamRef.current) {
-        localStreamRef.current.getVideoTracks().forEach(t => t.enabled = newCamState);
-    }
     if (user) {
         updateUser(user.uid, { isCamOn: newCamState });
         localStorage.setItem('ran-chat-cam-on', JSON.stringify(newCamState));
