@@ -2,20 +2,24 @@ import { cn } from "@/lib/utils";
 import { MicOff, VideoOff, Loader2, User } from "lucide-react";
 
 interface VideoPlayerProps extends React.HTMLAttributes<HTMLDivElement> {
-  src?: string;
   name: string;
   isMuted?: boolean;
   isCamOff?: boolean;
   isConnecting?: boolean;
 }
 
-export function VideoPlayer({ src, name, isMuted, isCamOff, isConnecting, className, children, ...props }: React.PropsWithChildren<VideoPlayerProps>) {
-  const showOverlay = isConnecting || isCamOff || (!children && !src);
+export function VideoPlayer({ name, isMuted, isCamOff, isConnecting, className, children, ...props }: React.PropsWithChildren<VideoPlayerProps>) {
+  const showOverlay = isConnecting || isCamOff;
 
   return (
     <div className={cn("relative aspect-video w-full overflow-hidden rounded-lg bg-secondary shadow-lg", className)} {...props}>
-      {showOverlay ? (
-        <div className="flex h-full w-full flex-col items-center justify-center bg-secondary text-muted-foreground p-4">
+      {/* The video element is now always part of the DOM, but hidden from view when the overlay is active. This ensures the video ref is always available for WebRTC. */}
+      <div className={cn("w-full h-full", showOverlay ? 'invisible' : 'visible')}>
+        {children}
+      </div>
+
+      {showOverlay && (
+        <div className="absolute inset-0 flex h-full w-full flex-col items-center justify-center bg-secondary text-muted-foreground p-4">
           {isConnecting ? (
             <>
               <Loader2 className="h-8 w-8 md:h-12 md:w-12 animate-spin text-accent" />
@@ -27,14 +31,6 @@ export function VideoPlayer({ src, name, isMuted, isCamOff, isConnecting, classN
              <User className="h-8 w-8 md:h-12 md:w-12" />
           )}
         </div>
-      ) : (
-        children ?? (
-          src && <img
-            src={src}
-            alt={`${name}'s video feed`}
-            className="object-cover w-full h-full"
-          />
-        )
       )}
 
       <div className="absolute bottom-0 left-0 flex items-center gap-2 p-1 md:p-2 bg-black/50 rounded-tr-lg">
@@ -44,5 +40,3 @@ export function VideoPlayer({ src, name, isMuted, isCamOff, isConnecting, classN
     </div>
   );
 }
-
-    
