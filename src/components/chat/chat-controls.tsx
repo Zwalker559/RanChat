@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useState } from "react";
@@ -34,7 +35,6 @@ interface ChatControlsProps {
   hasMicPermission: boolean;
   hasCameraPermission: boolean;
   isConnecting: boolean;
-  inCall: boolean;
   onToggleMic: () => void;
   onToggleCam: () => void;
   onNext: () => void;
@@ -47,7 +47,6 @@ export function ChatControls({
   hasMicPermission,
   hasCameraPermission,
   isConnecting,
-  inCall,
   onToggleMic,
   onToggleCam,
   onNext,
@@ -60,44 +59,40 @@ export function ChatControls({
       <div className="flex items-center justify-center gap-2 md:gap-4 p-2 rounded-full bg-card/60 backdrop-blur-md border border-border shadow-lg">
         <Tooltip>
           <TooltipTrigger asChild>
-            <div tabIndex={0}>
-              <Button
-                variant={isMicOn ? "secondary" : "destructive"}
-                size="icon"
-                className="h-12 w-12 rounded-full"
-                onClick={onToggleMic}
-                aria-label={isMicOn ? "Mute microphone" : "Unmute microphone"}
-                disabled={isConnecting || !hasMicPermission}
-              >
-                {isMicOn ? <Mic /> : <MicOff />}
-              </Button>
-            </div>
+            <Button
+              variant={isMicOn ? "secondary" : "destructive"}
+              size="icon"
+              className="h-12 w-12 rounded-full"
+              onClick={onToggleMic}
+              aria-label={isMicOn ? "Mute microphone" : "Unmute microphone"}
+              disabled={isConnecting || !hasMicPermission}
+            >
+              {isMicOn ? <Mic /> : <MicOff />}
+            </Button>
           </TooltipTrigger>
           {!hasMicPermission && (
             <TooltipContent>
-              <p>Microphone permission is not allowed. Please allow it to toggle your Microphone.</p>
+              <p>Microphone access denied. Please enable it in browser settings.</p>
             </TooltipContent>
           )}
         </Tooltip>
         
         <Tooltip>
           <TooltipTrigger asChild>
-            <div tabIndex={0}>
-              <Button
-                variant={isCamOn ? "secondary" : "destructive"}
-                size="icon"
-                className="h-12 w-12 rounded-full"
-                onClick={onToggleCam}
-                aria-label={isCamOn ? "Turn off camera" : "Turn on camera"}
-                disabled={isConnecting || !hasCameraPermission}
-              >
-                {isCamOn ? <Video /> : <VideoOff />}
-              </Button>
-            </div>
+            <Button
+              variant={isCamOn ? "secondary" : "destructive"}
+              size="icon"
+              className="h-12 w-12 rounded-full"
+              onClick={onToggleCam}
+              aria-label={isCamOn ? "Turn off camera" : "Turn on camera"}
+              disabled={isConnecting || !hasCameraPermission}
+            >
+              {isCamOn ? <Video /> : <VideoOff />}
+            </Button>
           </TooltipTrigger>
           {!hasCameraPermission && (
             <TooltipContent>
-              <p>Camera permission is not allowed. Please allow it to toggle your Camera.</p>
+              <p>Camera access denied. Please enable it in browser settings.</p>
             </TooltipContent>
           )}
         </Tooltip>
@@ -115,7 +110,7 @@ export function ChatControls({
           ) : (
               <>
                 <SkipForward className="mr-2" />
-                Skip
+                Next
               </>
           )}
         </Button>
@@ -141,7 +136,7 @@ export function ChatControls({
             </AlertDialogHeader>
             <AlertDialogFooter>
               <AlertDialogCancel>Cancel</AlertDialogCancel>
-              <AlertDialogAction onClick={() => { onStop(); setShowStopDialog(false); }} className="bg-destructive hover:bg-destructive/90">
+              <AlertDialogAction onClick={onStop} className="bg-destructive hover:bg-destructive/90">
                 End Session
               </AlertDialogAction>
             </AlertDialogFooter>
