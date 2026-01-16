@@ -145,8 +145,16 @@ export const findPartner = async (
   batch.set(chatRef, chatData);
   batch.delete(doc(firestore, 'queue', uid));
   batch.delete(doc(firestore, 'queue', partnerUid));
-  batch.update(doc(firestore, 'users', uid), { status: 'in-chat' });
-  batch.update(doc(firestore, 'users', partnerUid), { status: 'in-chat' });
+  batch.update(doc(firestore, 'users', uid), {
+    status: 'in-chat',
+    isCamOn: currentUser.isCamOn,
+    isMicOn: currentUser.isMicOn,
+  });
+  batch.update(doc(firestore, 'users', partnerUid), {
+    status: 'in-chat',
+    isCamOn: partner.isCamOn,
+    isMicOn: partner.isMicOn,
+  });
 
   try {
       await batch.commit();

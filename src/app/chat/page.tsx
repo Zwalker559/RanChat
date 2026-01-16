@@ -186,6 +186,7 @@ function ChatPageContent() {
         if (error.name === 'NotAllowedError' || error.name === 'PermissionDeniedError') {
             setHasCameraPermission(false);
             setHasMicPermission(false);
+            // Don't toast here to avoid rapid errors
         }
         setIsCamOn(false);
         setIsMicOn(false);
@@ -262,8 +263,6 @@ function ChatPageContent() {
         if (urlChatId && urlPartnerUid) {
             const chatDoc = await getChatDoc(urlChatId);
             if (chatDoc) {
-                // Explicitly set user status and media state in Firestore upon entering a chat
-                await updateUser(user.uid, { status: 'in-chat', isCamOn, isMicOn });
                 startWebRTC(urlIsCaller, urlChatId, urlPartnerUid);
             } else {
                 toast({ title: "Chat not found", description: "The chat you were looking for doesn't exist. Finding a new partner." });
@@ -282,7 +281,7 @@ function ChatPageContent() {
         router.push('/');
     }
 
-  }, [user, appUser, searchParams, startMedia, router, startWebRTC, toast, auth, isCamOn, isMicOn]);
+  }, [user, appUser, searchParams, startMedia, router, startWebRTC, toast, auth]);
 
   const handleToggleMic = () => {
     if (!hasMicPermission) return;
