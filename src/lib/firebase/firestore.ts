@@ -173,20 +173,23 @@ export const listenForPartner = (uid: string, callback: (chatId: string | null, 
         limit(1)
     );
 
-    const unsubscribe = onSnapshot(q, async (snapshot) => {
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+        // We only care about the 'added' event, which signifies a new match.
+        const change = snapshot.docChanges().find(change => change.type === 'added');
+        if (!change) {
+            return;
+        }
+        
         if (!snapshot.empty) {
             const chatDoc = snapshot.docs[0];
             const chatData = chatDoc.data();
             const participants = chatData.participants as string[];
             const partnerUid = participants.find(p => p !== uid);
             
-            // Check if this user is still marked as 'searching'
-            const user = await getUser(uid);
-            if (partnerUid && user?.status === 'searching') {
+            if (partnerUid) {
+                // If a new chat appears with our name, it's a match.
+                // The 'matchFound' ref in the queue page component will prevent this from firing twice.
                 console.log(`Match received by listener for user ${uid}. Partner: ${partnerUid}, Chat: ${chatDoc.id}`);
-                // This user has been matched by another user.
-                // The other user's batch operation should have already updated our status and removed us from queue.
-                // This callback just triggers the navigation.
                 callback(chatDoc.id, partnerUid);
             }
         }
