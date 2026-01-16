@@ -16,6 +16,7 @@ import { createOffer, listenForOffer, createAnswer, listenForAnswer, addIceCandi
 import { Unsubscribe, onSnapshot, doc } from 'firebase/firestore';
 import { firestore } from '@/lib/firebase/config';
 import { deleteUser as deleteAuthUser } from 'firebase/auth';
+import type { User as AppUser } from '@/lib/types';
 
 const servers = {
   iceServers: [
@@ -40,7 +41,7 @@ function ChatPageContent() {
   const [isLocalVideoMinimized, setIsLocalVideoMinimized] = useState(false);
   const [chatId, setChatId] = useState<string | null>(null);
   const [partnerUid, setPartnerUid] = useState<string | null>(null);
-  const [partnerUsername, setPartnerUsername] = useState<string>('Stranger');
+  const [partner, setPartner] = useState<AppUser | null>(null);
 
   const localVideoRef = useRef<HTMLVideoElement>(null);
   const remoteVideoRef = useRef<HTMLVideoElement>(null);
@@ -83,7 +84,7 @@ function ChatPageContent() {
 
     setChatId(null);
     setPartnerUid(null);
-    setPartnerUsername('Stranger');
+    setPartner(null);
     setIsConnecting(false);
     isUnloading.current = false;
   }, [chatId, user]);
@@ -96,8 +97,14 @@ function ChatPageContent() {
     setChatId(currentChatId);
     setPartnerUid(currentPartnerUid);
 
-    const partner = await getUser(currentPartnerUid);
-    setPartnerUsername(partner?.username || 'Stranger');
+    const partnerDocUnsub = onSnapshot(doc(firestore, 'users', currentPartnerUid), (docSnap) => {
+        if (docSnap.exists()) {
+            setPartner(docSnap.data() as AppUser);
+        } else {
+            setPartner(null);
+        }
+    });
+    firestoreUnsubscribers.current.push(partnerDocUnsub);
 
     pc.current = new RTCPeerConnection(servers);
 
@@ -309,8 +316,10 @@ function ChatPageContent() {
         )}>
           <div className="relative group/videoplayer w-full h-full min-h-0">
             <VideoPlayer
-                name={partnerUsername}
-                isConnecting={isConnecting || !partnerUid}
+                name={partner?.username || 'Stranger'}
+                isMuted={!partner?.isMicOn}
+                isCamOff={!partner?.isCamOn}
+                isConnecting={isConnecting || !partner}
                 className="h-full"
             >
               <video ref={remoteVideoRef} className="w-full h-full object-cover" autoPlay playsInline />
