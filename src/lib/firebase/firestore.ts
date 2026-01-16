@@ -91,7 +91,7 @@ export const updateUserStatus = async (uid: string, status: User['status']) => {
   }
 };
 
-export const addUserToQueue = async (uid: string, currentUserData: Omit<User, 'uid' | 'createdAt'>) => {
+export const addUserToQueue = async (uid: string, currentUserData: Omit<User, 'uid' | 'createdAt' | 'chatId'>) => {
   const queueData = {
     ...currentUserData,
     uid: uid,
@@ -317,7 +317,6 @@ export const endChat = async (chatId: string) => {
         
         if (chatSnap.exists()) {
              const batch = writeBatch(firestore);
-             const participants = chatSnap.data().participants || [];
 
             // Delete ICE candidates subcollection for each peer
             const peersRef = collection(firestore, 'chats', chatId, 'peers');
@@ -336,12 +335,6 @@ export const endChat = async (chatId: string) => {
             
             // Delete the main chat document
             batch.delete(chatRef);
-
-            // Set participants' status back to 'online' so they can search again
-            for (const uid of participants) {
-                const userRef = doc(firestore, 'users', uid);
-                batch.update(userRef, { status: 'online' });
-            }
 
             await batch.commit();
         }

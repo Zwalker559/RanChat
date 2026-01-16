@@ -3,10 +3,14 @@
 import {useRouter} from 'next/navigation';
 import {useEffect, useCallback, useRef} from 'react';
 import {useAuth} from '@/hooks/use-auth';
-import {listenForPartner, updateUserStatus, deleteUser as deleteFirestoreUser, findPartner, getUser } from '@/lib/firebase/firestore';
+import {listenForPartner, updateUserStatus, deleteUser as deleteFirestoreUser, findPartner, getUser, addUserToQueue } from '@/lib/firebase/firestore';
 import { deleteUser as deleteAuthUser } from 'firebase/auth';
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/hooks/use-toast';
+import { doc, getDoc } from 'firebase/firestore';
+import { firestore } from '@/lib/firebase/config';
+import type { User } from '@/lib/types';
+
 
 const Spinner = () => (
   <div className="relative h-20 w-20">
@@ -42,23 +46,29 @@ export default function QueuePage() {
     if (isCancelling.current) return;
     isCancelling.current = true;
     
+    // Set status to offline before deleting to prevent being found in queue
+    if (user) await updateUserStatus(user.uid, 'offline');
     await fullUserDelete();
-    toast({ title: "Account Deleted", description: "Your anonymous account has been successfully deleted." });
+
+    toast({ title: "Search Cancelled", description: "Your anonymous account has been deleted." });
     router.push('/');
-  }, [fullUserDelete, router, toast]);
+  }, [fullUserDelete, router, toast, user]);
 
   useEffect(() => {
     const handleBeforeUnload = async (e: BeforeUnloadEvent) => {
       if (isCancelling.current || matchFound.current) return;
-      // This is a "best-effort" fire-and-forget attempt to clean up on browser close.
-      fullUserDelete();
+      if (user) {
+        // This is a "best-effort" fire-and-forget attempt to clean up on browser close.
+        // We set to offline, which also removes from queue.
+        updateUserStatus(user.uid, 'offline');
+      }
     };
     window.addEventListener('beforeunload', handleBeforeUnload);
 
     return () => {
       window.removeEventListener('beforeunload', handleBeforeUnload);
     };
-  }, [fullUserDelete]);
+  }, [user]);
 
   useEffect(() => {
     if (!user || !appUser) {
@@ -71,13 +81,21 @@ export default function QueuePage() {
     matchFound.current = false;
     isCancelling.current = false;
     
-    // Attempt to find a partner immediately on entering the queue
-    findPartner(user.uid, appUser).then(match => {
-        if (match && !matchFound.current) {
-            matchFound.current = true;
-            router.push(`/chat?chatId=${match.chatId}&partnerUid=${match.partnerUid}&caller=true`);
-        }
-    });
+    const enterQueueAndSearch = async () => {
+      // Ensure user status is 'searching' and they are in the queue collection
+      await updateUserStatus(user.uid, 'searching');
+      const { uid, createdAt, ...queueData } = appUser;
+      await addUserToQueue(user.uid, { ...queueData, status: 'searching' });
+      
+      // Attempt to find a partner immediately
+      const match = await findPartner(user.uid, appUser);
+      if (match && !matchFound.current) {
+          matchFound.current = true;
+          router.push(`/chat?chatId=${match.chatId}&partnerUid=${match.partnerUid}&caller=true`);
+      }
+    };
+
+    enterQueueAndSearch();
 
     const unsubscribePartnerListener = listenForPartner(user.uid, (chatId, partnerUid) => {
         if (chatId && partnerUid && !matchFound.current) {
@@ -92,10 +110,13 @@ export default function QueuePage() {
       // If we navigate away without finding a match (e.g. cancel button), set status to online
       if (!matchFound.current && user && !isCancelling.current) {
         const checkStatusAndSetOnline = async () => {
-          const latestUser = await getUser(user.uid);
-          // Only update if they are still 'searching', to avoid race conditions
-          if (latestUser && latestUser.status === 'searching') {
-            await updateUserStatus(user.uid, 'online');
+          const latestUserDoc = await getDoc(doc(firestore, 'users', user.uid));
+          if(latestUserDoc.exists()) {
+            const latestUser = latestUserDoc.data() as User;
+            // Only update if they are still 'searching', to avoid race conditions
+            if (latestUser && latestUser.status === 'searching') {
+              await updateUserStatus(user.uid, 'online');
+            }
           }
         };
         checkStatusAndSetOnline();

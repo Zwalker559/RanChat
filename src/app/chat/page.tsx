@@ -11,7 +11,7 @@ import { ChatControls } from '@/components/chat/chat-controls';
 import { Button } from '@/components/ui/button';
 import { Maximize, Minimize } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { createOffer, listenForOffer, createAnswer, listenForAnswer, addIceCandidate, listenForIceCandidates, endChat, updateUserStatus, deleteUser as deleteFirestoreUser, updateUser } from '@/lib/firebase/firestore';
+import { createOffer, listenForOffer, createAnswer, listenForAnswer, addIceCandidate, listenForIceCandidates, endChat, updateUserStatus, deleteUser as deleteFirestoreUser, updateUser, addUserToQueue } from '@/lib/firebase/firestore';
 import { Unsubscribe, onSnapshot, doc } from 'firebase/firestore';
 import { firestore } from '@/lib/firebase/config';
 import { deleteUser as deleteAuthUser } from 'firebase/auth';
@@ -218,10 +218,8 @@ function ChatPageContent() {
       if (remoteVideoRef.current) remoteVideoRef.current.srcObject = null;
 
       // Clean up Firestore chat document if we are not navigating away due to page unload
-      if (!isUnloading.current) {
-          endChat(urlChatId).then(() => {
-             if (user) updateUserStatus(user.uid, 'online');
-          });
+      if (!isUnloading.current && urlChatId) {
+          endChat(urlChatId);
       }
     };
   // This dependency array is critical. It ensures the setup logic runs only ONCE when the user is authenticated.
@@ -252,12 +250,25 @@ function ChatPageContent() {
   }, [isCamOn, hasCameraPermission, user]);
 
   const handleNext = useCallback(async () => {
-    isUnloading.current = true;
+    isUnloading.current = true; // prevent cleanup from running endChat again
     const chatId = searchParams.get('chatId');
-    if (chatId) await endChat(chatId);
-    if (user) await updateUserStatus(user.uid, 'searching');
+
+    // First, end the current chat
+    if (chatId) {
+      await endChat(chatId);
+    }
+
+    // Then, put self back into the queue
+    if (user && appUser) {
+      await updateUserStatus(user.uid, 'searching');
+      // We need to omit fields that are not part of the queue data
+      const { uid, createdAt, ...queueData } = appUser;
+      await addUserToQueue(user.uid, { ...queueData, status: 'searching' });
+    }
+
+    // Finally, navigate to the queue page
     router.push('/queue');
-  }, [searchParams, user, router]);
+  }, [searchParams, user, appUser, router]);
   
   const fullUserDelete = useCallback(async () => {
     if (user && auth?.currentUser) {
@@ -282,11 +293,18 @@ function ChatPageContent() {
   
   useEffect(() => {
     const handleBeforeUnload = () => {
-      if (!isUnloading.current) fullUserDelete();
+      // Don't run the full delete if we are intentionally navigating away
+      // or a match was found, as other cleanup logic will handle it.
+      if (isUnloading.current) return;
+      
+      const chatId = searchParams.get('chatId');
+      if (chatId) endChat(chatId);
+      if (user) updateUserStatus(user.uid, 'offline');
     };
     window.addEventListener('beforeunload', handleBeforeUnload);
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
-  }, [fullUserDelete]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, searchParams]);
 
 
   return (
@@ -379,5 +397,3 @@ export default function ChatPage() {
         </Suspense>
     )
 }
-
-    
