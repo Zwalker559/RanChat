@@ -185,22 +185,6 @@
             }
           ]
         }
-      },
-      {
-        "path": "/active_users/{userId}",
-        "definition": {
-          "entityName": "User",
-          "schema": {
-            "$ref": "#/backend/entities/User"
-          },
-          "description": "Stores presence information (online status) for active users. Includes 'userId' as a parameter.",
-          "params": [
-            {
-              "name": "userId",
-              "description": "The unique identifier for the user."
-            }
-          ]
-        }
       }
     ],
     "reasoning": "The Firestore structure is designed to optimize for real-time chat functionality and presence tracking while adhering to the principles of Authorization Independence and Structural Segregation. User profiles, chat sessions, and messages are stored in separate collections with appropriate subcollections to maintain a clear separation of concerns. The `/active_users` collection supports presence tracking. The structure avoids hierarchical authorization dependencies by storing authorization-related data (like user IDs in chat sessions) directly within the relevant documents, enabling atomic operations and simplifying security rules. The use of path-based ownership for users and their associated chat sessions/messages ensures data privacy and simplifies access control. This structure supports the required QAPs by segregating data based on access requirements and enabling efficient `list` operations within user-owned data."

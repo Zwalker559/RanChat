@@ -34,7 +34,6 @@ export const createUser = async (
     createdAt: serverTimestamp(),
   };
   await setDoc(userRef, newUser, { merge: true });
-  await setDoc(doc(firestore, 'active_users', uid), { uid, lastSeen: serverTimestamp() });
 };
 
 export const isUsernameTaken = async (username: string): Promise<boolean> => {
@@ -55,12 +54,10 @@ export const deleteUser = async (uid: string) => {
     if (!uid) return;
     try {
       const userRef = doc(firestore, 'users', uid);
-      const activeUserRef = doc(firestore, 'active_users', uid);
       const queueRef = doc(firestore, 'queue', uid);
 
       const batch = writeBatch(firestore);
       batch.delete(userRef);
-      batch.delete(activeUserRef);
       batch.delete(queueRef);
       
       await batch.commit();
@@ -80,16 +77,13 @@ export const updateUser = async (uid: string, data: Partial<User>) => {
 export const updateUserStatus = async (uid: string, status: User['status']) => {
   if (!uid) return;
   const userRef = doc(firestore, 'users', uid);
-  const activeUserRef = doc(firestore, 'active_users', uid);
   try {
     const userDoc = await getDoc(userRef);
     if (!userDoc.exists()) return;
 
     if (status === 'offline' || status === 'deleted') {
-      await deleteDoc(activeUserRef);
-      await deleteDoc(doc(firestore, 'queue', uid)); // Also remove from queue if going offline
-    } else {
-      await setDoc(activeUserRef, { uid, lastSeen: serverTimestamp() }, { merge: true });
+      // Also remove from queue if going offline
+      await deleteDoc(doc(firestore, 'queue', uid)); 
     }
     await updateDoc(userRef, {status});
   } catch(e) {
@@ -174,24 +168,19 @@ export const listenForPartner = (uid: string, callback: (chatId: string | null, 
     );
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
-        // We only care about the 'added' event, which signifies a new match.
         const change = snapshot.docChanges().find(change => change.type === 'added');
         if (!change) {
             return;
         }
+
+        const chatDoc = change.doc;
+        const chatData = chatDoc.data();
+        const participants = chatData.participants as string[];
+        const partnerUid = participants.find(p => p !== uid);
         
-        if (!snapshot.empty) {
-            const chatDoc = snapshot.docs[0];
-            const chatData = chatDoc.data();
-            const participants = chatData.participants as string[];
-            const partnerUid = participants.find(p => p !== uid);
-            
-            if (partnerUid) {
-                // If a new chat appears with our name, it's a match.
-                // The 'matchFound' ref in the queue page component will prevent this from firing twice.
-                console.log(`Match received by listener for user ${uid}. Partner: ${partnerUid}, Chat: ${chatDoc.id}`);
-                callback(chatDoc.id, partnerUid);
-            }
+        if (partnerUid) {
+            console.log(`Match received by listener for user ${uid}. Partner: ${partnerUid}, Chat: ${chatDoc.id}`);
+            callback(chatDoc.id, partnerUid);
         }
     }, (error) => {
         console.error("Error listening for partner:", error);

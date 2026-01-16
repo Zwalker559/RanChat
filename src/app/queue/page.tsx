@@ -26,22 +26,39 @@ export default function QueuePage() {
   const isCancelling = useRef(false);
   const matchFound = useRef(false);
 
-  const handleCancel = useCallback(async () => {
-    if (isCancelling.current) return;
-    isCancelling.current = true;
-    
+  const fullUserDelete = useCallback(async () => {
     if (user && auth?.currentUser) {
         try {
             await deleteFirestoreUser(user.uid);
             await deleteAuthUser(auth.currentUser);
-            toast({ title: "Account Deleted", description: "Your anonymous account has been successfully deleted." });
+            console.log("Anonymous user account and data deleted successfully.");
         } catch (error) {
-            console.error("Error deleting user during cancel:", error);
-            toast({ variant: "destructive", title: "Error", description: "Could not delete your account." });
+            console.error("Error deleting anonymous user:", error);
         }
     }
+  }, [user, auth]);
+
+  const handleCancel = useCallback(async () => {
+    if (isCancelling.current) return;
+    isCancelling.current = true;
+    
+    await fullUserDelete();
+    toast({ title: "Account Deleted", description: "Your anonymous account has been successfully deleted." });
     router.push('/');
-  }, [user, auth, router, toast]);
+  }, [fullUserDelete, router, toast]);
+
+  useEffect(() => {
+    const handleBeforeUnload = async (e: BeforeUnloadEvent) => {
+      if (isCancelling.current || matchFound.current) return;
+      // This is a "best-effort" fire-and-forget attempt to clean up on browser close.
+      fullUserDelete();
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+    };
+  }, [fullUserDelete]);
 
   useEffect(() => {
     if (!user || !appUser) {
