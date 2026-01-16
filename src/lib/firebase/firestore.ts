@@ -30,7 +30,7 @@ export const createUser = async (
   const userRef = doc(firestore, 'users', uid);
   const newUser: Omit<User, 'uid'> & { createdAt: any } = {
     ...userData,
-    status: 'offline',
+    status: 'offline', // Initial status, will be updated to 'searching' immediately
     createdAt: serverTimestamp(),
   };
   await setDoc(userRef, newUser, { merge: true });
@@ -76,18 +76,23 @@ export const updateUser = async (uid: string, data: Partial<User>) => {
 
 export const updateUserStatus = async (uid: string, status: User['status']) => {
   if (!uid) return;
-  const userRef = doc(firestore, 'users', uid);
-  try {
-    const userDoc = await getDoc(userRef);
-    if (!userDoc.exists()) return;
 
-    if (status === 'offline' || status === 'deleted') {
-      // Also remove from queue if going offline
-      await deleteDoc(doc(firestore, 'queue', uid)); 
+  if (status === 'offline') {
+    // If a user goes offline, their data is ephemeral and should be removed from Firestore.
+    // This deletes from the 'users' and 'queue' collections.
+    await deleteUser(uid);
+  } else {
+    // For 'searching' or 'in-chat' status updates.
+    const userRef = doc(firestore, 'users', uid);
+    try {
+      // Only update if the document actually exists.
+      const userDoc = await getDoc(userRef);
+      if (userDoc.exists()) {
+        await updateDoc(userRef, { status });
+      }
+    } catch (e) {
+      console.log("Could not update user status, document may not exist.", e);
     }
-    await updateDoc(userRef, {status});
-  } catch(e) {
-    console.log("Could not update user status", e);
   }
 };
 
