@@ -36,6 +36,7 @@ function ChatPageContent() {
   const [isCamOn, setIsCamOn] = useState(true);
   const [isConnecting, setIsConnecting] = useState(false);
   const [hasCameraPermission, setHasCameraPermission] = useState(true);
+  const [hasMicPermission, setHasMicPermission] = useState(true);
   const [isLocalVideoMinimized, setIsLocalVideoMinimized] = useState(false);
   const [chatId, setChatId] = useState<string | null>(null);
   const [partnerUid, setPartnerUid] = useState<string | null>(null);
@@ -89,7 +90,7 @@ function ChatPageContent() {
 
 
   const startWebRTC = useCallback(async (isCaller: boolean, currentChatId: string, currentPartnerUid: string) => {
-    if (!user || !auth || !localStreamRef.current) return;
+    if (!user || !auth) return;
     
     setIsConnecting(false); 
     setChatId(currentChatId);
@@ -100,9 +101,11 @@ function ChatPageContent() {
 
     pc.current = new RTCPeerConnection(servers);
 
-    localStreamRef.current.getTracks().forEach(track => {
-      pc.current!.addTrack(track, localStreamRef.current!);
-    });
+    if (localStreamRef.current) {
+        localStreamRef.current.getTracks().forEach(track => {
+            pc.current!.addTrack(track, localStreamRef.current!);
+        });
+    }
 
     pc.current.ontrack = event => {
       if (remoteVideoRef.current && event.streams[0]) {
@@ -160,8 +163,9 @@ function ChatPageContent() {
 
   const startMedia = useCallback(async () => {
     if (localStreamRef.current) return localStreamRef.current;
+    let stream = null;
     try {
-        const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+        stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
         localStreamRef.current = stream;
         if (localVideoRef.current) {
             localVideoRef.current.srcObject = stream;
@@ -169,19 +173,23 @@ function ChatPageContent() {
         stream.getAudioTracks().forEach(t => t.enabled = isMicOn);
         stream.getVideoTracks().forEach(t => t.enabled = isCamOn);
         setHasCameraPermission(true);
-        return stream;
-    } catch (error) {
-        console.error('Error accessing camera:', error);
-        setHasCameraPermission(false);
-        toast({
-            variant: 'destructive',
-            title: 'Camera Access Denied',
-            description: 'Please enable camera permissions in your browser settings to use this feature.',
-        });
+        setHasMicPermission(true);
+    } catch (error: any) {
+        console.error('Error accessing media devices:', error);
+        if (error.name === 'NotAllowedError' || error.name === 'PermissionDeniedError') {
+            setHasCameraPermission(false);
+            setHasMicPermission(false);
+            toast({
+                variant: 'destructive',
+                title: 'Media Access Denied',
+                description: 'Please enable camera and microphone permissions in your browser settings.',
+            });
+        }
         setIsCamOn(false);
+        setIsMicOn(false);
         setIsConnecting(false);
-        return null;
     }
+    return stream;
   }, [toast, isMicOn, isCamOn]);
 
   const handleNext = useCallback(async () => {
@@ -236,7 +244,7 @@ function ChatPageContent() {
 
   useEffect(() => {
     const initializeChat = async () => {
-        if (!user || !appUser || !localStreamRef.current) return;
+        if (!user || !appUser) return;
 
         const urlChatId = searchParams.get('chatId');
         const urlPartnerUid = searchParams.get('partnerUid');
@@ -257,11 +265,8 @@ function ChatPageContent() {
     };
 
     if (user && appUser) {
-        startMedia().then(stream => {
-            if (stream) {
-                initializeChat();
-            }
-            else router.push('/'); // No camera access, go home
+        startMedia().then(() => {
+            initializeChat();
         });
     } else if(!user && !auth?.currentUser) {
         router.push('/');
@@ -270,6 +275,7 @@ function ChatPageContent() {
   }, [user, appUser, searchParams, startMedia, router, startWebRTC, toast, auth]);
 
   const handleToggleMic = () => {
+    if (!hasMicPermission) return;
     const newMicState = !isMicOn;
     setIsMicOn(newMicState);
     if (localStreamRef.current) {
@@ -282,6 +288,7 @@ function ChatPageContent() {
   }
 
   const handleToggleCam = () => {
+    if (!hasCameraPermission) return;
     const newCamState = !isCamOn;
     setIsCamOn(newCamState);
     if (localStreamRef.current) {
@@ -318,18 +325,10 @@ function ChatPageContent() {
                 <VideoPlayer
                   name={appUser?.username || "You"}
                   isMuted={!isMicOn}
-                  isCamOff={!isCamOn}
+                  isCamOff={!isCamOn || !hasCameraPermission}
                   className="h-full"
                 >
                   <video ref={localVideoRef} className="w-full h-full object-cover" autoPlay muted playsInline />
-                  { !hasCameraPermission && isCamOn && (
-                      <Alert variant="destructive" className="absolute bottom-2 left-2 right-2 p-2">
-                        <AlertTitle className="text-xs">Camera Required</AlertTitle>
-                        <AlertDescription className="text-xs">
-                          Please allow camera access.
-                        </AlertDescription>
-                      </Alert>
-                  )}
                 </VideoPlayer>
                 <Button 
                     size="icon" 
@@ -348,6 +347,8 @@ function ChatPageContent() {
           <ChatControls
             isMicOn={isMicOn}
             isCamOn={isCamOn}
+            hasMicPermission={hasMicPermission}
+            hasCameraPermission={hasCameraPermission}
             isConnecting={isConnecting}
             inCall={!!chatId}
             onToggleMic={handleToggleMic}
