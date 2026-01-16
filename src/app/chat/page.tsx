@@ -48,6 +48,7 @@ function ChatPageContent() {
   // Refs for core WebRTC and state objects
   const pc = useRef<RTCPeerConnection | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
+  const remoteStreamRef = useRef<MediaStream | null>(null);
   const isUnloading = useRef(false);
 
   useEffect(() => {
@@ -112,6 +113,11 @@ function ChatPageContent() {
             localStreamRef.current.getTracks().forEach(track => track.stop());
             localStreamRef.current = null;
         }
+        
+        if (remoteStreamRef.current) {
+            remoteStreamRef.current.getTracks().forEach(track => track.stop());
+            remoteStreamRef.current = null;
+        }
 
         if (localVideoRef.current) localVideoRef.current.srcObject = null;
         if (remoteVideoRef.current) remoteVideoRef.current.srcObject = null;
@@ -134,6 +140,12 @@ function ChatPageContent() {
                 localVideoRef.current.srcObject = stream;
             }
             
+            // Create a stable MediaStream for the remote peer and attach it.
+            remoteStreamRef.current = new MediaStream();
+            if (remoteVideoRef.current) {
+                remoteVideoRef.current.srcObject = remoteStreamRef.current;
+            }
+
             // Apply initial media state
             const initialCamOn = JSON.parse(localStorage.getItem('ran-chat-cam-on') ?? 'true');
             const initialMicOn = JSON.parse(localStorage.getItem('ran-chat-mic-on') ?? 'true');
@@ -141,7 +153,6 @@ function ChatPageContent() {
             stream.getAudioTracks().forEach(t => t.enabled = initialMicOn);
             setIsCamOn(initialCamOn);
             setIsMicOn(initialMicOn);
-            await updateUser(user.uid, { isCamOn: initialCamOn, isMicOn: initialMicOn });
             
         } catch (error) {
             console.error("Error accessing media devices:", error);
@@ -149,7 +160,6 @@ function ChatPageContent() {
             setHasMicPermission(false);
             setIsCamOn(false);
             setIsMicOn(false);
-             await updateUser(user.uid, { isCamOn: false, isMicOn: false });
         }
         
         if (isCancelled) return;
@@ -159,9 +169,9 @@ function ChatPageContent() {
 
         // Add tracks from local stream to peer connection
         if (localStreamRef.current) {
-            for (const track of localStreamRef.current.getTracks()) {
-                peerConnection.addTrack(track, localStreamRef.current);
-            }
+            localStreamRef.current.getTracks().forEach(track => 
+                peerConnection.addTrack(track, localStreamRef.current!)
+            );
         }
         
         // Setup Peer Connection event handlers
@@ -169,8 +179,8 @@ function ChatPageContent() {
         peerConnection.onconnectionstatechange = () => console.log(`Connection State: ${peerConnection.connectionState}`);
         
         peerConnection.ontrack = (event) => {
-            if (remoteVideoRef.current && event.streams[0]) {
-                remoteVideoRef.current.srcObject = event.streams[0];
+            if (remoteStreamRef.current) {
+                remoteStreamRef.current.addTrack(event.track);
             }
         };
 
@@ -182,7 +192,10 @@ function ChatPageContent() {
         localUnsubscribers.push(onSnapshot(doc(firestore, 'users', urlPartnerUid), (docSnap) => {
             if (isCancelled) return;
             if (docSnap.exists()) {
-                setPartner(docSnap.data() as AppUser);
+                const partnerData = docSnap.data() as AppUser;
+                 if (JSON.stringify(partner) !== JSON.stringify(partnerData)) {
+                    setPartner(partnerData);
+                }
             } else {
                 setPartner(null);
             }
@@ -197,7 +210,6 @@ function ChatPageContent() {
             if (isCancelled) return;
             if (!docSnap.exists() && !isUnloading.current) {
                 toast({ title: "Partner has disconnected", description: "Finding a new partner..." });
-                await endChat(urlChatId);
                 router.push('/queue');
             }
         }));
@@ -221,7 +233,7 @@ function ChatPageContent() {
                 await createAnswer(urlChatId, user.uid, { type: answerDescription.type, sdp: answerDescription.sdp });
             }));
         }
-
+        await updateUser(user.uid, { isCamOn, isMicOn });
         setIsConnecting(false);
     };
 
@@ -403,3 +415,5 @@ export default function ChatPage() {
         </Suspense>
     )
 }
+
+    
