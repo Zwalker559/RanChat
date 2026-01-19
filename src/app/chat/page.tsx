@@ -16,7 +16,6 @@ import { Unsubscribe, onSnapshot, doc } from 'firebase/firestore';
 import { firestore } from '@/lib/firebase/config';
 import { deleteUser as deleteAuthUser } from 'firebase/auth';
 import type { User as AppUser } from '@/lib/types';
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 
 const servers = {
   iceServers: [
@@ -334,16 +333,6 @@ function ChatPageContent() {
   return (
     <main className="grid h-screen max-h-screen grid-cols-1 lg:grid-cols-[1fr_400px] overflow-hidden">
       <div className="relative flex flex-col items-center justify-between p-4 bg-black/90 h-full">
-        {(!hasCameraPermission || !hasMicPermission) && (
-            <Alert variant="destructive" className="absolute top-4 left-4 right-4 w-auto z-50 max-w-md mx-auto">
-              <AlertTitle>Permissions Denied</AlertTitle>
-              <AlertDescription>
-                { !hasCameraPermission && 'Camera access has been denied. ' }
-                { !hasMicPermission && 'Microphone access has been denied. ' }
-                 Please grant permissions in your browser settings. You can still watch and text chat.
-              </AlertDescription>
-            </Alert>
-        )}
         <div className={cn(
           "grid w-full flex-1 gap-4 transition-all duration-300",
           isLocalVideoMinimized ? "grid-rows-1" : "grid-rows-[1fr_auto] md:grid-rows-1 md:grid-cols-[1fr_300px]"
@@ -421,6 +410,8 @@ export default function ChatPage() {
         </Suspense>
     )
 }
+
+    
 
     
 
