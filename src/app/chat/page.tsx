@@ -128,6 +128,9 @@ function ChatPageContent() {
         event.streams[0].getTracks().forEach(track => {
           remoteStreamRef.current?.addTrack(track);
         });
+        if (remoteVideoRef.current) {
+          remoteVideoRef.current.muted = false;
+        }
       };
       
       pc.current.onicecandidate = event => {
@@ -418,5 +421,7 @@ export default function ChatPage() {
         </Suspense>
     )
 }
+
+    
 
     

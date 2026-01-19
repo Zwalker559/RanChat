@@ -28,6 +28,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { cn } from "@/lib/utils";
 
 interface ChatControlsProps {
   isMicOn: boolean;
@@ -62,7 +63,10 @@ export function ChatControls({
             <Button
               variant={isMicOn ? "secondary" : "destructive"}
               size="icon"
-              className="h-12 w-12 rounded-full"
+              className={cn(
+                "h-12 w-12 rounded-full transition-all",
+                isMicOn && "shadow-[0_0_15px_hsl(var(--accent))] ring-1 ring-accent"
+              )}
               onClick={onToggleMic}
               aria-label={isMicOn ? "Mute microphone" : "Unmute microphone"}
               disabled={isConnecting || !hasMicPermission}
@@ -146,3 +150,5 @@ export function ChatControls({
     </TooltipProvider>
   );
 }
+
+    
