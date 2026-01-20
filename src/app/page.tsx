@@ -213,7 +213,7 @@ export default function Home() {
                             <FormControl>
                               <RadioGroupItem value="female" />
                             </FormControl>
-                            <Label className-="font-normal">Female</Label>
+                            <Label className="font-normal">Female</Label>
                           </FormItem>
                           <FormItem className="flex items-center space-x-2 space-y-0">
                             <FormControl>

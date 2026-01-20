@@ -115,7 +115,7 @@ export default function QueuePage() {
     });
 
     // Start the search process
-    enterQueueAndSearch();
+    setTimeout(enterQueueAndSearch, 5000);
 
     return () => {
       unsubscribePartnerListener();

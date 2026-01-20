@@ -238,7 +238,7 @@ export const createAnswer = async (
   answer: RTCSessionDescriptionInit
 ) => {
   const peerRef = doc(firestore, 'chats', chatId, 'peers', uid);
-  await setDoc(peerRef, {answer}, { merge: true });
+  await updateDoc(peerRef, { answer });
 };
 
 export const listenForAnswer = (
