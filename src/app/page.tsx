@@ -84,6 +84,9 @@ export default function Home() {
       });
       setIsCamOn(appUser.isCamOn);
       setIsMicOn(appUser.isMicOn);
+      // Sync with localStorage to ensure chat page gets the correct initial state
+      localStorage.setItem('ran-chat-cam-on', JSON.stringify(appUser.isCamOn));
+      localStorage.setItem('ran-chat-mic-on', JSON.stringify(appUser.isMicOn));
     }
   }, [appUser, form]);
 

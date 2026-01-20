@@ -199,7 +199,6 @@ function ChatPageContent() {
         }));
       }
 
-      await updateUser(user.uid, { isCamOn, isMicOn });
       setIsConnecting(false);
     };
 
