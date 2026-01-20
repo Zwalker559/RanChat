@@ -65,9 +65,12 @@ function ChatPageContent() {
   const partnerUid = searchParams.get('partnerUid');
   const isCaller = searchParams.get('caller') === 'true';
 
+  // This effect safely attaches the remote stream to the video element when it's ready.
   useEffect(() => {
     if (remoteVideoRef.current && remoteStream) {
         remoteVideoRef.current.srcObject = remoteStream;
+        remoteVideoRef.current.muted = false; // Unmute here after srcObject is set
+        remoteVideoRef.current.play().catch(e => console.error("Remote play failed", e));
     }
   }, [remoteStream]);
 
@@ -81,12 +84,31 @@ function ChatPageContent() {
     let isCancelled = false;
     const unsubscribers: Unsubscribe[] = [];
     
-    const setupChat = async () => {
-      setIsConnecting(true);
-      isUnloading.current = false;
-      setRemoteStream(null);
+    // 1. Create Peer Connection INSTANCE immediately
+    const peerConnection = new RTCPeerConnection(servers);
+    pc.current = peerConnection;
+    setIsConnecting(true);
+    setRemoteStream(null);
+    isUnloading.current = false;
+    
+    // 2. Setup WebRTC event handlers on the instance
+    peerConnection.onicecandidate = event => {
+      if (event.candidate && user) {
+        addIceCandidate(chatId, user.uid, event.candidate.toJSON());
+      }
+    };
+    
+    peerConnection.ontrack = (event) => {
+      event.streams[0].getTracks().forEach((track) => {
+          // This is a more robust way to handle tracks and build the stream
+          const currentStream = remoteStream || new MediaStream();
+          currentStream.addTrack(track);
+          setRemoteStream(currentStream);
+      });
+    };
 
-      // 1. Get User Media first. If it fails, we can't proceed.
+    const setupAndStart = async () => {
+      // 3. Get User Media
       let stream: MediaStream;
       try {
         stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
@@ -98,22 +120,18 @@ function ChatPageContent() {
         setHasMicPermission(true);
       } catch (error) {
         console.error("Error accessing media devices:", error);
-        const err = error as DOMException;
-        if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
-            setHasCameraPermission(false);
-            setHasMicPermission(false);
-        } else {
-            const mediaError = error as Error;
-            if (mediaError.message.toLowerCase().includes('video')) setHasCameraPermission(false);
-            if (mediaError.message.toLowerCase().includes('audio')) setHasMicPermission(false);
-        }
+        setHasCameraPermission(false);
+        setHasMicPermission(false);
         setIsConnecting(false);
-        return; // Stop the setup process if we can't get media
+        toast({
+            variant: "destructive",
+            title: "Permissions Error",
+            description: "Camera and Microphone access denied. Please enable in your browser settings.",
+        });
+        return;
       }
 
-      // 2. Now that we have media, create the peer connection
-      pc.current = new RTCPeerConnection(servers);
-      
+      // 4. Attach media to local elements and connection
       localStreamRef.current = stream;
       if (localVideoRef.current) {
         localVideoRef.current.srcObject = stream;
@@ -124,22 +142,21 @@ function ChatPageContent() {
       stream.getAudioTracks().forEach(t => t.enabled = isMicOn);
 
       stream.getTracks().forEach(track => {
-        if (pc.current) {
-          pc.current.addTrack(track, stream);
+        try {
+          peerConnection.addTrack(track, stream);
+        } catch (e) {
+          console.error("Error adding track:", e);
         }
       });
       
-      // 3. Set up all WebRTC and Firestore listeners
-      pc.current.ontrack = (event) => {
-        setRemoteStream(event.streams[0]);
-      };
+      // 5. Set up all Firestore listeners
+      unsubscribers.push(
+        listenForIceCandidates(chatId, partnerUid, (candidate) => {
+          peerConnection.addIceCandidate(new RTCIceCandidate(candidate))
+            .catch(e => console.error("Error adding received ICE candidate", e));
+        })
+      );
       
-      pc.current.onicecandidate = event => {
-        if (event.candidate && user) {
-          addIceCandidate(chatId, user.uid, event.candidate.toJSON());
-        }
-      };
-
       unsubscribers.push(
         onSnapshot(doc(firestore, 'users', partnerUid), (docSnap) => {
           if (docSnap.exists()) {
@@ -154,14 +171,6 @@ function ChatPageContent() {
       );
       
       unsubscribers.push(
-        listenForIceCandidates(chatId, partnerUid, (candidate) => {
-          // IMPORTANT FIX: Do not check for remoteDescription. The browser handles queuing.
-          pc.current?.addIceCandidate(new RTCIceCandidate(candidate))
-            .catch(e => console.error("Error adding received ICE candidate", e));
-        })
-      );
-      
-      unsubscribers.push(
         onSnapshot(doc(firestore, 'chats', chatId), (docSnap) => {
           if (!docSnap.exists() && !isUnloading.current) {
              toast({ title: "Chat ended" });
@@ -170,25 +179,23 @@ function ChatPageContent() {
         })
       );
 
-      // 4. Start the signaling process (Offer/Answer)
+      // 6. Start the signaling process (Offer/Answer)
       if (isCaller) {
         unsubscribers.push(listenForAnswer(chatId, partnerUid, async (answer) => {
-            if (pc.current && !pc.current.currentRemoteDescription) {
-                await pc.current.setRemoteDescription(new RTCSessionDescription(answer));
-            }
+            if (peerConnection.currentRemoteDescription) return;
+            await peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
         }));
         
-        const offer = await pc.current.createOffer();
-        await pc.current.setLocalDescription(offer);
+        const offer = await peerConnection.createOffer();
+        await peerConnection.setLocalDescription(offer);
         await createOffer(chatId, user.uid, { type: offer.type, sdp: offer.sdp });
       } else {
         unsubscribers.push(listenForOffer(chatId, partnerUid, async (offer) => {
-            if (pc.current && !pc.current.remoteDescription) {
-                await pc.current.setRemoteDescription(new RTCSessionDescription(offer));
-                const answer = await pc.current.createAnswer();
-                await pc.current.setLocalDescription(answer);
-                await createAnswer(chatId, user.uid, { type: answer.type, sdp: answer.sdp });
-            }
+            if (peerConnection.remoteDescription) return;
+            await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
+            const answer = await peerConnection.createAnswer();
+            await peerConnection.setLocalDescription(answer);
+            await createAnswer(chatId, user.uid, { type: answer.type, sdp: answer.sdp });
         }));
       }
 
@@ -196,16 +203,17 @@ function ChatPageContent() {
       setIsConnecting(false);
     };
 
-    setupChat();
+    setupAndStart();
     
+    // 7. Unified cleanup function
     return () => {
       isCancelled = true;
       console.log("Cleaning up chat session...");
-      setLocalStreamReady(false);
       
       unsubscribers.forEach(unsub => unsub());
 
       if (pc.current) {
+        pc.current.getTransceivers().forEach(transceiver => transceiver.stop());
         pc.current.ontrack = null;
         pc.current.onicecandidate = null;
         pc.current.close();
@@ -220,6 +228,7 @@ function ChatPageContent() {
       if (localVideoRef.current) localVideoRef.current.srcObject = null;
       if (remoteVideoRef.current) remoteVideoRef.current.srcObject = null;
       setRemoteStream(null);
+      setLocalStreamReady(false);
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user, chatId, partnerUid, isCaller]);
@@ -238,27 +247,32 @@ function ChatPageContent() {
             return;
         };
 
-        audioContext = new window.AudioContext();
-        analyser = audioContext.createAnalyser();
-        analyser.minDecibels = -90;
-        analyser.maxDecibels = -10;
-        analyser.smoothingTimeConstant = 0.85;
+        try {
+            audioContext = new window.AudioContext();
+            analyser = audioContext.createAnalyser();
+            analyser.minDecibels = -90;
+            analyser.maxDecibels = -10;
+            analyser.smoothingTimeConstant = 0.85;
 
-        source = audioContext.createMediaStreamSource(stream);
-        source.connect(analyser);
+            source = audioContext.createMediaStreamSource(stream);
+            source.connect(analyser);
 
-        analyser.fftSize = 32;
-        const bufferLength = analyser.frequencyBinCount;
-        const dataArray = new Uint8Array(bufferLength);
+            analyser.fftSize = 32;
+            const bufferLength = analyser.frequencyBinCount;
+            const dataArray = new Uint8Array(bufferLength);
 
-        const loop = () => {
-            animationFrameId = requestAnimationFrame(loop);
-            analyser.getByteFrequencyData(dataArray);
-            const sum = dataArray.reduce((a, b) => a + b, 0);
-            const avg = bufferLength > 0 ? sum / bufferLength : 0;
-            setIsSpeaking(avg > 15);
-        };
-        loop();
+            const loop = () => {
+                animationFrameId = requestAnimationFrame(loop);
+                analyser.getByteFrequencyData(dataArray);
+                const sum = dataArray.reduce((a, b) => a + b, 0);
+                const avg = bufferLength > 0 ? sum / bufferLength : 0;
+                setIsSpeaking(avg > 15);
+            };
+            loop();
+        } catch(e) {
+            console.error("Audio context error:", e);
+            setIsSpeaking(false);
+        }
 
     } else {
         setIsSpeaking(false);
@@ -270,7 +284,7 @@ function ChatPageContent() {
         }
         source?.disconnect();
         if (audioContext?.state !== 'closed') {
-            audioContext?.close();
+            audioContext?.close().catch(e => console.error("Error closing audio context", e));
         }
     };
 }, [localStreamReady, isMicOn]);
@@ -352,7 +366,7 @@ function ChatPageContent() {
                 isConnecting={isConnecting && !remoteStream}
                 className="h-full"
             >
-              <video ref={remoteVideoRef} className="w-full h-full object-cover" autoPlay playsInline />
+              <video ref={remoteVideoRef} className="w-full h-full object-cover" playsInline muted />
             </VideoPlayer>
           </div>
           
