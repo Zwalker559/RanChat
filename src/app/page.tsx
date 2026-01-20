@@ -89,18 +89,16 @@ export default function Home() {
 
   useEffect(() => {
     const handleBeforeUnload = () => {
-      // If the user is submitting the form to navigate to the queue,
-      // don't mark them as offline.
-      if (isSubmitting) return;
-      
+      // If a user is navigating away from any page that isn't the chat page,
+      // and isn't in the process of matching, their status should be set to offline.
+      // This is a catch-all for closing tabs/browsers.
       if (user) {
-        // This will delete the user's document, marking them as offline.
         updateUserStatus(user.uid, 'offline');
       }
     };
     window.addEventListener('beforeunload', handleBeforeUnload);
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
-  }, [user, isSubmitting]);
+  }, [user]);
 
 
   async function onSubmit(values: z.infer<typeof formSchema>) {

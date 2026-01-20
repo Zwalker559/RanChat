@@ -3,7 +3,7 @@
 import {useState, useEffect, createContext, useContext, ReactNode} from 'react';
 import {onAuthStateChanged, signInAnonymously, User as FirebaseAuthUser, Auth, AuthError} from 'firebase/auth';
 import { auth, firestore } from '@/lib/firebase/config';
-import {doc, onSnapshot, setDoc, serverTimestamp} from 'firebase/firestore';
+import {doc, onSnapshot} from 'firebase/firestore';
 import type {User as AppUser} from '@/lib/types';
 import { Button } from '@/components/ui/button';
 
@@ -45,28 +45,12 @@ export const AuthProvider = ({children}: {children: ReactNode}) => {
                 // User is signed in
                 setUser(firebaseUser);
                 const userRef = doc(firestore, 'users', firebaseUser.uid);
-                const unsubUser = onSnapshot(userRef, async (docSnap) => {
+                const unsubUser = onSnapshot(userRef, (docSnap) => {
                    if (docSnap.exists()) {
                        setAppUser({uid: docSnap.id, ...docSnap.data()} as AppUser);
                    } else {
-                       // Create a user document since one doesn't exist yet.
-                       // This makes the user "online" as soon as they visit.
-                       const initialUserData = {
-                           username: `User-${firebaseUser.uid.slice(0,5)}`,
-                           gender: 'male',
-                           matchPreference: 'both',
-                           isMicOn: true,
-                           isCamOn: true,
-                           status: 'idle',
-                           createdAt: serverTimestamp()
-                       };
-                       try {
-                           await setDoc(userRef, initialUserData);
-                           // The onSnapshot listener will fire again with the new data,
-                           // so we don't need to call setAppUser here.
-                       } catch (e) {
-                           console.error("Error creating user document:", e);
-                       }
+                       // User document doesn't exist yet, it will be created on the home page.
+                       setAppUser(null);
                    }
                    setLoading(false);
                 }, (error) => {
