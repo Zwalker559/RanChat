@@ -82,15 +82,10 @@ function ChatPageContent() {
           }
         }).catch(error => {
           console.error("Remote video playback was prevented:", error);
-          toast({
-            variant: "destructive",
-            title: "Playback Error",
-            description: "Could not play partner's video automatically."
-          });
         });
       }
     }
-  }, [remoteStream, toast]);
+  }, [remoteStream]);
 
   // Main setup and teardown effect
   useEffect(() => {
@@ -138,9 +133,6 @@ function ChatPageContent() {
         if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
             setHasCameraPermission(false);
             setHasMicPermission(false);
-        } else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
-            setHasCameraPermission(false);
-            setHasMicPermission(false);
         } else {
             const mediaError = error as Error;
             if (mediaError.message.toLowerCase().includes('video')) setHasCameraPermission(false);
@@ -149,15 +141,7 @@ function ChatPageContent() {
       }
       
       pc.current.ontrack = (event) => {
-        // When a remote track is received, add it to the remote stream
-        setRemoteStream(prevStream => {
-          const newStream = prevStream || new MediaStream();
-          if (!newStream.getTrackById(event.track.id)) {
-            newStream.addTrack(event.track);
-          }
-          // Return a new MediaStream object to ensure React detects the change
-          return new MediaStream(newStream.getTracks());
-        });
+        setRemoteStream(event.streams[0]);
       };
       
       pc.current.onicecandidate = event => {
@@ -172,7 +156,7 @@ function ChatPageContent() {
             setPartner(docSnap.data() as AppUser);
           } else {
             if (!isUnloading.current) {
-              toast({ title: "Partner has disconnected", description: "Finding a new partner..." });
+              toast({ title: "Partner has disconnected" });
               router.push('/queue');
             }
           }
@@ -190,7 +174,7 @@ function ChatPageContent() {
       unsubscribers.push(
         onSnapshot(doc(firestore, 'chats', chatId), (docSnap) => {
           if (!docSnap.exists() && !isUnloading.current) {
-             toast({ title: "Chat ended", description: "Finding a new partner..." });
+             toast({ title: "Chat ended" });
              router.push('/queue');
           }
         })
@@ -359,24 +343,12 @@ function ChatPageContent() {
     );
   }
 
-  const showPermissionAlert = !hasCameraPermission || !hasMicPermission;
-
   return (
     <main className="grid h-screen max-h-screen grid-cols-1 lg:grid-cols-[1fr_400px] overflow-hidden">
       <div className="relative flex flex-col items-center justify-between p-4 bg-black/90 h-full">
         
-        {showPermissionAlert && (
-          <Alert variant="destructive" className="absolute top-4 left-4 right-4 z-50 max-w-xl mx-auto">
-            <AlertTitle>Permissions Required</AlertTitle>
-            <AlertDescription>
-              Your {!hasCameraPermission && 'camera'}{!hasCameraPermission && !hasMicPermission && ' and '}{!hasMicPermission && 'microphone'} access is denied. Please enable permissions in your browser settings to share your video/audio.
-            </AlertDescription>
-          </Alert>
-        )}
-        
         <div className={cn(
           "grid w-full flex-1 gap-4 transition-all duration-300",
-          showPermissionAlert ? "pt-16" : "",
           isLocalVideoMinimized ? "grid-rows-1" : "grid-rows-[1fr_auto] md:grid-rows-1 md:grid-cols-[1fr_300px]"
         )}>
           <div className="relative group/videoplayer w-full h-full min-h-0">
@@ -454,5 +426,3 @@ export default function ChatPage() {
         </Suspense>
     )
 }
-
-    
