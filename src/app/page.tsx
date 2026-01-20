@@ -39,6 +39,7 @@ const formSchema = z.object({
   }),
 });
 
+const version = "0.1.0";
 
 export default function Home() {
   const router = useRouter();
@@ -212,7 +213,7 @@ export default function Home() {
                             <FormControl>
                               <RadioGroupItem value="female" />
                             </FormControl>
-                            <Label className="font-normal">Female</Label>
+                            <Label className-="font-normal">Female</Label>
                           </FormItem>
                           <FormItem className="flex items-center space-x-2 space-y-0">
                             <FormControl>
@@ -272,6 +273,7 @@ export default function Home() {
 
       <div className="flex flex-col items-center gap-6 w-full">
         <LiveUserCount />
+        <p className="text-sm text-muted-foreground">Version: {version}</p>
       </div>
 
     </main>
