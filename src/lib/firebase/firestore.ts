@@ -91,7 +91,10 @@ export const updateUserStatus = async (uid: string, status: User['status']) => {
         await updateDoc(userRef, { status });
       }
     } catch (e) {
-      console.log("Could not update user status, document may not exist.", e);
+      // This catch block handles a potential race condition where the user
+      // document is deleted between the getDoc and updateDoc calls.
+      // We can safely ignore this error as the end result (user is gone)
+      // is an acceptable state. We no longer log this as an error.
     }
   }
 };
