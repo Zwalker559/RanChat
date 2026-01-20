@@ -62,7 +62,7 @@ export const deleteUser = async (uid: string) => {
       
       await batch.commit();
     } catch(e) {
-      console.error("Error deleting user from firestore", e);
+      // This can fail if the documents don't exist, which is fine.
     }
 };
 
@@ -70,7 +70,13 @@ export const deleteUser = async (uid: string) => {
 export const updateUser = async (uid: string, data: Partial<User>) => {
     if (!uid) return;
     const userRef = doc(firestore, 'users', uid);
-    await updateDoc(userRef, data);
+    try {
+        await updateDoc(userRef, data);
+    } catch (error) {
+        // This can happen if the user doc is deleted by another process
+        // between the time this function is called and the update is executed.
+        // It's a harmless race condition in the context of this app.
+    }
 };
 
 
@@ -78,23 +84,16 @@ export const updateUserStatus = async (uid: string, status: User['status']) => {
   if (!uid) return;
 
   if (status === 'offline') {
-    // If a user goes offline, their data is ephemeral and should be removed from Firestore.
-    // This deletes from the 'users' and 'queue' collections.
     await deleteUser(uid);
   } else {
-    // For 'searching' or 'in-chat' status updates.
     const userRef = doc(firestore, 'users', uid);
     try {
-      // Only update if the document actually exists.
       const userDoc = await getDoc(userRef);
       if (userDoc.exists()) {
         await updateDoc(userRef, { status });
       }
     } catch (e) {
-      // This catch block handles a potential race condition where the user
-      // document is deleted between the getDoc and updateDoc calls.
-      // We can safely ignore this error as the end result (user is gone)
-      // is an acceptable state. We no longer log this as an error.
+        // Harmless race condition where doc is deleted before update.
     }
   }
 };

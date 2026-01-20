@@ -34,7 +34,7 @@ export function VideoPlayer({ name, isMuted, isCamOff, isConnecting, className, 
 
       <div className="absolute bottom-0 left-0 flex items-center gap-2 p-1 md:p-2 bg-black/50 rounded-tr-lg">
         <span className="text-xs md:text-sm font-medium text-white">{name}</span>
-        {isMuted && <MicOff className="h-3 w-3 md:h-4 md:w-4 text-red-500" />}
+        {isMuted && <MicOff className="h-3 w-3 md:h-4 md:w-4 text-white" />}
       </div>
     </div>
   );

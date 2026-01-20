@@ -36,6 +36,7 @@ interface ChatControlsProps {
   hasMicPermission: boolean;
   hasCameraPermission: boolean;
   isConnecting: boolean;
+  isSpeaking: boolean;
   onToggleMic: () => void;
   onToggleCam: () => void;
   onNext: () => void;
@@ -48,6 +49,7 @@ export function ChatControls({
   hasMicPermission,
   hasCameraPermission,
   isConnecting,
+  isSpeaking,
   onToggleMic,
   onToggleCam,
   onNext,
@@ -65,7 +67,7 @@ export function ChatControls({
               size="icon"
               className={cn(
                 "h-12 w-12 rounded-full transition-all",
-                isMicOn && "shadow-[0_0_15px_hsl(var(--accent))] ring-1 ring-accent"
+                isMicOn && isSpeaking && "shadow-[0_0_15px_hsl(var(--chart-2))] ring-2 ring-[hsl(var(--chart-2))]"
               )}
               onClick={onToggleMic}
               aria-label={isMicOn ? "Mute microphone" : "Unmute microphone"}
@@ -135,7 +137,7 @@ export function ChatControls({
             <AlertDialogHeader>
               <AlertDialogTitle>End Chat Session?</AlertDialogTitle>
               <AlertDialogDescription>
-                Are you sure you want to end this chat and return to the home screen? Your anonymous account will be deleted.
+                Are you sure you want to end this chat and return to the home screen?
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>
@@ -150,5 +152,3 @@ export function ChatControls({
     </TooltipProvider>
   );
 }
-
-    

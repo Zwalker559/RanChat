@@ -38,7 +38,10 @@ function ChatPageContent() {
   const [partner, setPartner] = useState<AppUser | null>(null);
   const [hasCameraPermission, setHasCameraPermission] = useState(true);
   const [hasMicPermission, setHasMicPermission] = useState(true);
-  const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null); // NEW: State to hold the remote stream safely
+  const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
+  const [isSpeaking, setIsSpeaking] = useState(false);
+  const [localStreamReady, setLocalStreamReady] = useState(false);
+
 
   const [isMicOn, setIsMicOn] = useState(() => {
     if (typeof window === 'undefined') return true;
@@ -62,12 +65,10 @@ function ChatPageContent() {
   const partnerUid = searchParams.get('partnerUid');
   const isCaller = searchParams.get('caller') === 'true';
 
-  // Effect to safely attach the remote stream to the video element
   useEffect(() => {
     if (remoteVideoRef.current && remoteStream) {
       remoteVideoRef.current.srcObject = remoteStream;
       
-      // Mute, Play, then Unmute to handle browser autoplay policies
       remoteVideoRef.current.muted = true;
       const playPromise = remoteVideoRef.current.play();
 
@@ -100,7 +101,7 @@ function ChatPageContent() {
     const setupChat = async () => {
       setIsConnecting(true);
       isUnloading.current = false;
-      setRemoteStream(null); // Reset remote stream on new chat
+      setRemoteStream(null);
 
       pc.current = new RTCPeerConnection(servers);
 
@@ -115,6 +116,7 @@ function ChatPageContent() {
         if (localVideoRef.current) {
           localVideoRef.current.srcObject = stream;
         }
+        setLocalStreamReady(true);
         
         stream.getVideoTracks().forEach(t => t.enabled = isCamOn);
         stream.getAudioTracks().forEach(t => t.enabled = isMicOn);
@@ -139,9 +141,14 @@ function ChatPageContent() {
         }
       }
       
-      // NEW: Safely set remote stream to state, avoiding race conditions.
       pc.current.ontrack = (event) => {
-        setRemoteStream(event.streams[0]);
+        event.streams[0].getTracks().forEach(track => {
+            setRemoteStream(prev => {
+                const newStream = prev || new MediaStream();
+                newStream.addTrack(track);
+                return newStream;
+            });
+        });
       };
       
       pc.current.onicecandidate = event => {
@@ -210,6 +217,7 @@ function ChatPageContent() {
     return () => {
       isCancelled = true;
       console.log("Cleaning up chat session...");
+      setLocalStreamReady(false);
       
       unsubscribers.forEach(unsub => unsub());
 
@@ -232,6 +240,57 @@ function ChatPageContent() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user, chatId, partnerUid, isCaller]);
 
+  useEffect(() => {
+    let animationFrameId: number;
+    let audioContext: AudioContext;
+    let analyser: AnalyserNode;
+    let source: MediaStreamAudioSourceNode;
+
+    if (localStreamReady && isMicOn && localStreamRef.current) {
+        const stream = localStreamRef.current;
+        const audioTracks = stream.getAudioTracks();
+        if (audioTracks.length === 0 || !audioTracks.some(t => t.enabled)) {
+            setIsSpeaking(false);
+            return;
+        };
+
+        audioContext = new window.AudioContext();
+        analyser = audioContext.createAnalyser();
+        analyser.minDecibels = -90;
+        analyser.maxDecibels = -10;
+        analyser.smoothingTimeConstant = 0.85;
+
+        source = audioContext.createMediaStreamSource(stream);
+        source.connect(analyser);
+
+        analyser.fftSize = 32;
+        const bufferLength = analyser.frequencyBinCount;
+        const dataArray = new Uint8Array(bufferLength);
+
+        const loop = () => {
+            animationFrameId = requestAnimationFrame(loop);
+            analyser.getByteFrequencyData(dataArray);
+            const sum = dataArray.reduce((a, b) => a + b, 0);
+            const avg = bufferLength > 0 ? sum / bufferLength : 0;
+            setIsSpeaking(avg > 15);
+        };
+        loop();
+
+    } else {
+        setIsSpeaking(false);
+    }
+
+    return () => {
+        if (animationFrameId) {
+            cancelAnimationFrame(animationFrameId);
+        }
+        source?.disconnect();
+        if (audioContext?.state !== 'closed') {
+            audioContext?.close();
+        }
+    };
+}, [localStreamReady, isMicOn]);
+
 
   // --- User Actions ---
   const handleToggleMic = useCallback(() => {
@@ -242,6 +301,7 @@ function ChatPageContent() {
             updateUser(user.uid, { isMicOn: newMicState });
             localStorage.setItem('ran-chat-mic-on', JSON.stringify(newMicState));
         }
+        if (!newMicState) setIsSpeaking(false);
         return newMicState;
     });
   }, [user]);
@@ -356,6 +416,7 @@ function ChatPageContent() {
             hasMicPermission={hasMicPermission}
             hasCameraPermission={hasCameraPermission}
             isConnecting={isConnecting}
+            isSpeaking={isSpeaking}
             onToggleMic={handleToggleMic}
             onToggleCam={handleToggleCam}
             onNext={handleNext}
