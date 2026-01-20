@@ -69,9 +69,9 @@ export default function Home() {
   const form = useForm<z.infer<typeof formSchema>>({
     resolver: zodResolver(formSchema),
     defaultValues: {
-      username: appUser?.username || "",
-      gender: appUser?.gender || "male",
-      matchPreference: appUser?.matchPreference || "both"
+      username: "",
+      gender: "male",
+      matchPreference: "both"
     },
   });
   
@@ -86,6 +86,21 @@ export default function Home() {
       setIsMicOn(appUser.isMicOn);
     }
   }, [appUser, form]);
+
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      // If the user is submitting the form to navigate to the queue,
+      // don't mark them as offline.
+      if (isSubmitting) return;
+      
+      if (user) {
+        // This will delete the user's document, marking them as offline.
+        updateUserStatus(user.uid, 'offline');
+      }
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [user, isSubmitting]);
 
 
   async function onSubmit(values: z.infer<typeof formSchema>) {
