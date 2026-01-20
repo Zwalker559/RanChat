@@ -66,26 +66,11 @@ function ChatPageContent() {
   const isCaller = searchParams.get('caller') === 'true';
 
   useEffect(() => {
-    if (remoteVideoRef.current && remoteStream && remoteStream.getTracks().length > 0) {
-      if (remoteVideoRef.current.srcObject !== remoteStream) {
-          remoteVideoRef.current.srcObject = remoteStream;
-      }
-      
-      // Mute, play, then unmute to handle browser autoplay policies
-      remoteVideoRef.current.muted = true;
-      const playPromise = remoteVideoRef.current.play();
-
-      if (playPromise !== undefined) {
-        playPromise.then(() => {
-          if (remoteVideoRef.current) {
-            remoteVideoRef.current.muted = false;
-          }
-        }).catch(error => {
-          console.error("Remote video playback was prevented:", error);
-        });
-      }
+    if (remoteVideoRef.current && remoteStream) {
+        remoteVideoRef.current.srcObject = remoteStream;
     }
   }, [remoteStream]);
+
 
   // Main setup and teardown effect
   useEffect(() => {
@@ -101,30 +86,14 @@ function ChatPageContent() {
       isUnloading.current = false;
       setRemoteStream(null);
 
-      pc.current = new RTCPeerConnection(servers);
-
+      // 1. Get User Media first. If it fails, we can't proceed.
+      let stream: MediaStream;
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+        stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
         if (isCancelled) { 
           stream.getTracks().forEach(t => t.stop()); 
           return; 
         }
-        
-        localStreamRef.current = stream;
-        if (localVideoRef.current) {
-          localVideoRef.current.srcObject = stream;
-        }
-        setLocalStreamReady(true);
-        
-        stream.getVideoTracks().forEach(t => t.enabled = isCamOn);
-        stream.getAudioTracks().forEach(t => t.enabled = isMicOn);
-
-        stream.getTracks().forEach(track => {
-          if (pc.current) {
-            pc.current.addTrack(track, stream);
-          }
-        });
-
         setHasCameraPermission(true);
         setHasMicPermission(true);
       } catch (error) {
@@ -138,8 +107,29 @@ function ChatPageContent() {
             if (mediaError.message.toLowerCase().includes('video')) setHasCameraPermission(false);
             if (mediaError.message.toLowerCase().includes('audio')) setHasMicPermission(false);
         }
+        setIsConnecting(false);
+        return; // Stop the setup process if we can't get media
       }
+
+      // 2. Now that we have media, create the peer connection
+      pc.current = new RTCPeerConnection(servers);
       
+      localStreamRef.current = stream;
+      if (localVideoRef.current) {
+        localVideoRef.current.srcObject = stream;
+      }
+      setLocalStreamReady(true);
+      
+      stream.getVideoTracks().forEach(t => t.enabled = isCamOn);
+      stream.getAudioTracks().forEach(t => t.enabled = isMicOn);
+
+      stream.getTracks().forEach(track => {
+        if (pc.current) {
+          pc.current.addTrack(track, stream);
+        }
+      });
+      
+      // 3. Set up all WebRTC and Firestore listeners
       pc.current.ontrack = (event) => {
         setRemoteStream(event.streams[0]);
       };
@@ -165,9 +155,9 @@ function ChatPageContent() {
       
       unsubscribers.push(
         listenForIceCandidates(chatId, partnerUid, (candidate) => {
-          if (pc.current?.remoteDescription) {
-            pc.current?.addIceCandidate(new RTCIceCandidate(candidate));
-          }
+          // IMPORTANT FIX: Do not check for remoteDescription. The browser handles queuing.
+          pc.current?.addIceCandidate(new RTCIceCandidate(candidate))
+            .catch(e => console.error("Error adding received ICE candidate", e));
         })
       );
       
@@ -180,6 +170,7 @@ function ChatPageContent() {
         })
       );
 
+      // 4. Start the signaling process (Offer/Answer)
       if (isCaller) {
         unsubscribers.push(listenForAnswer(chatId, partnerUid, async (answer) => {
             if (pc.current && !pc.current.currentRemoteDescription) {
@@ -329,7 +320,9 @@ function ChatPageContent() {
   useEffect(() => {
     const handleBeforeUnload = () => {
       if (isUnloading.current) return;
-      if (user) updateUserStatus(user.uid, 'offline');
+      if (user) {
+        updateUserStatus(user.uid, 'offline');
+      }
     };
     window.addEventListener('beforeunload', handleBeforeUnload);
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
@@ -359,7 +352,7 @@ function ChatPageContent() {
                 isConnecting={isConnecting && !remoteStream}
                 className="h-full"
             >
-              <video ref={remoteVideoRef} className="w-full h-full object-cover" playsInline />
+              <video ref={remoteVideoRef} className="w-full h-full object-cover" autoPlay playsInline />
             </VideoPlayer>
           </div>
           
