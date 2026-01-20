@@ -68,9 +68,9 @@ function ChatPageContent() {
   // This effect safely attaches the remote stream to the video element when it's ready.
   useEffect(() => {
     if (remoteVideoRef.current && remoteStream) {
+      if (remoteVideoRef.current.srcObject !== remoteStream) {
         remoteVideoRef.current.srcObject = remoteStream;
-        remoteVideoRef.current.muted = false; // Unmute here after srcObject is set
-        remoteVideoRef.current.play().catch(e => console.error("Remote play failed", e));
+      }
     }
   }, [remoteStream]);
 
@@ -100,10 +100,13 @@ function ChatPageContent() {
     
     peerConnection.ontrack = (event) => {
       event.streams[0].getTracks().forEach((track) => {
-          // This is a more robust way to handle tracks and build the stream
-          const currentStream = remoteStream || new MediaStream();
-          currentStream.addTrack(track);
-          setRemoteStream(currentStream);
+        setRemoteStream((prevStream) => {
+          const newStream = prevStream ? new MediaStream(prevStream) : new MediaStream();
+          if (!newStream.getTrackById(track.id)) {
+            newStream.addTrack(track);
+          }
+          return newStream;
+        });
       });
     };
 
@@ -365,7 +368,7 @@ function ChatPageContent() {
                 isConnecting={isConnecting && !remoteStream}
                 className="h-full"
             >
-              <video ref={remoteVideoRef} className="w-full h-full object-cover" playsInline muted />
+              <video ref={remoteVideoRef} className="w-full h-full object-cover" autoPlay playsInline />
             </VideoPlayer>
           </div>
           
