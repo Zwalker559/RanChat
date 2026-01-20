@@ -16,6 +16,7 @@ import {
   Timestamp,
   orderBy,
   limit,
+  runTransaction,
 } from 'firebase/firestore';
 import {firestore} from './config';
 import type {User, Message} from '@/lib/types';
@@ -110,69 +111,86 @@ export const addUserToQueue = async (uid: string, currentUserData: Omit<User, 'u
 export const findPartner = async (
   uid: string,
   currentUser: User
-) => {
+): Promise<{ chatId: string; partnerUid: string } | null> => {
+  // Query for potential partners outside the transaction
   const queueRef = collection(firestore, 'queue');
-  const q = query(
-      queueRef,
-      orderBy('timestamp', 'asc'),
-      limit(20)
-  );
-
+  const q = query(queueRef, orderBy('timestamp', 'asc'), limit(20));
   const querySnapshot = await getDocs(q);
+
   const potentialPartners = querySnapshot.docs
     .map(doc => ({ id: doc.id, ...doc.data() } as User & { id: string }))
     .filter(user => user.id !== uid);
-    
+
   if (potentialPartners.length === 0) {
-      return null;
+    return null;
   }
 
-  const preferredMatches = potentialPartners.filter(partner => 
-      (currentUser.matchPreference === 'both' || currentUser.matchPreference === partner.gender) &&
-      (partner.matchPreference === 'both' || partner.matchPreference === currentUser.gender)
+  // Prioritize matches based on gender preference
+  const preferredMatches = potentialPartners.filter(partner =>
+    (currentUser.matchPreference === 'both' || currentUser.matchPreference === partner.gender) &&
+    (partner.matchPreference === 'both' || partner.matchPreference === currentUser.gender)
   );
-  
+
   const otherMatches = potentialPartners.filter(partner => !preferredMatches.some(p => p.id === partner.id));
   const sortedPartners = [...preferredMatches, ...otherMatches];
 
-  const partner = sortedPartners[0];
-  if (!partner) return null;
+  // Try to match with each potential partner within a transaction
+  for (const partner of sortedPartners) {
+    const partnerUid = partner.id;
+    try {
+      const matchResult = await runTransaction(firestore, async (transaction) => {
+        const partnerQueueRef = doc(firestore, 'queue', partnerUid);
+        const userQueueRef = doc(firestore, 'queue', uid);
 
-  const partnerUid = partner.id;
-  const chatId = doc(collection(firestore, 'chats')).id;
-  const chatRef = doc(firestore, 'chats', chatId);
+        // Check if both users are still in the queue
+        const partnerQueueSnap = await transaction.get(partnerQueueRef);
+        const userQueueSnap = await transaction.get(userQueueRef);
 
-  const chatData = {
-    id: chatId,
-    participants: [uid, partnerUid],
-    createdAt: serverTimestamp(),
-  };
+        if (!partnerQueueSnap.exists() || !userQueueSnap.exists()) {
+          // One of the users is no longer in the queue, so this match is void.
+          // Returning null from the transaction function will abort it.
+          return null;
+        }
 
-  const batch = writeBatch(firestore);
-  batch.set(chatRef, chatData);
-  batch.delete(doc(firestore, 'queue', uid));
-  batch.delete(doc(firestore, 'queue', partnerUid));
-  batch.update(doc(firestore, 'users', uid), {
-    status: 'in-chat',
-    isCamOn: currentUser.isCamOn,
-    isMicOn: currentUser.isMicOn,
-  });
-  batch.update(doc(firestore, 'users', partnerUid), {
-    status: 'in-chat',
-    isCamOn: partner.isCamOn,
-    isMicOn: partner.isMicOn,
-  });
+        // Both users are in the queue, proceed with the match.
+        const chatId = doc(collection(firestore, 'chats')).id;
+        const chatRef = doc(firestore, 'chats', chatId);
 
-  try {
-      await batch.commit();
-      console.log(`Match found! Chat created: ${chatId} between ${uid} and ${partnerUid}`);
-      return {chatId, partnerUid};
-  } catch (error) {
-      console.log("Matchmaking batch commit failed, likely a race condition. Partner was probably just matched.", error);
-      // If the batch fails, the user remains in the queue to be picked up by another search.
-      return null;
+        const chatData = {
+          id: chatId,
+          participants: [uid, partnerUid],
+          createdAt: serverTimestamp(),
+        };
+
+        const userRef = doc(firestore, 'users', uid);
+        const partnerUserRef = doc(firestore, 'users', partnerUid);
+
+        // Perform all writes atomically
+        transaction.set(chatRef, chatData);
+        transaction.delete(userQueueRef);
+        transaction.delete(partnerQueueRef);
+        transaction.update(userRef, { status: 'in-chat' });
+        transaction.update(partnerUserRef, { status: 'in-chat' });
+
+        return { chatId, partnerUid };
+      });
+
+      // If matchResult is not null, the transaction was successful and we have a match.
+      if (matchResult) {
+        console.log(`Match found via transaction! Chat: ${matchResult.chatId} between ${uid} and ${partnerUid}`);
+        return matchResult;
+      }
+    } catch (error) {
+      // The transaction failed, likely due to contention (another user matched first).
+      // This is expected behavior. We log it and let the loop try the next partner.
+      console.log(`Matchmaking transaction failed for partner ${partnerUid}. This is likely a normal race condition.`, error);
+    }
   }
+
+  // No match was made after trying all potential partners.
+  return null;
 };
+
 
 export const listenForPartner = (uid: string, callback: (chatId: string | null, partnerUid: string | null) => void) => {
     const q = query(
