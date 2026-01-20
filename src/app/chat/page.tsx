@@ -11,7 +11,7 @@ import { ChatControls } from '@/components/chat/chat-controls';
 import { Button } from '@/components/ui/button';
 import { Maximize, Minimize } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { createOffer, listenForOffer, createAnswer, listenForAnswer, addIceCandidate, listenForIceCandidates, endChat, updateUserStatus, addUserToQueue, updateUser } from '@/lib/firebase/firestore';
+import { createOffer, listenForOffer, createAnswer, listenForAnswer, addIceCandidate, listenForIceCandidates, endChat, updateUserStatus, updateUser } from '@/lib/firebase/firestore';
 import { Unsubscribe, onSnapshot, doc } from 'firebase/firestore';
 import { firestore } from '@/lib/firebase/config';
 import type { User as AppUser } from '@/lib/types';
@@ -66,9 +66,12 @@ function ChatPageContent() {
   const isCaller = searchParams.get('caller') === 'true';
 
   useEffect(() => {
-    if (remoteVideoRef.current && remoteStream) {
-      remoteVideoRef.current.srcObject = remoteStream;
+    if (remoteVideoRef.current && remoteStream && remoteStream.getTracks().length > 0) {
+      if (remoteVideoRef.current.srcObject !== remoteStream) {
+          remoteVideoRef.current.srcObject = remoteStream;
+      }
       
+      // Mute, play, then unmute to handle browser autoplay policies
       remoteVideoRef.current.muted = true;
       const playPromise = remoteVideoRef.current.play();
 
@@ -131,23 +134,29 @@ function ChatPageContent() {
         setHasMicPermission(true);
       } catch (error) {
         console.error("Error accessing media devices:", error);
-        if (error instanceof DOMException && (error.name === 'NotAllowedError' || error.name === 'PermissionDeniedError')) {
+        const err = error as DOMException;
+        if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+            setHasCameraPermission(false);
+            setHasMicPermission(false);
+        } else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
             setHasCameraPermission(false);
             setHasMicPermission(false);
         } else {
             const mediaError = error as Error;
-            if (mediaError.message.includes('video')) setHasCameraPermission(false);
-            if (mediaError.message.includes('audio')) setHasMicPermission(false);
+            if (mediaError.message.toLowerCase().includes('video')) setHasCameraPermission(false);
+            if (mediaError.message.toLowerCase().includes('audio')) setHasMicPermission(false);
         }
       }
       
       pc.current.ontrack = (event) => {
-        event.streams[0].getTracks().forEach(track => {
-            setRemoteStream(prev => {
-                const newStream = prev || new MediaStream();
-                newStream.addTrack(track);
-                return newStream;
-            });
+        // When a remote track is received, add it to the remote stream
+        setRemoteStream(prevStream => {
+          const newStream = prevStream || new MediaStream();
+          if (!newStream.getTrackById(event.track.id)) {
+            newStream.addTrack(event.track);
+          }
+          // Return a new MediaStream object to ensure React detects the change
+          return new MediaStream(newStream.getTracks());
         });
       };
       
@@ -445,3 +454,5 @@ export default function ChatPage() {
         </Suspense>
     )
 }
+
+    
