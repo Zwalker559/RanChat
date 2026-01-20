@@ -17,7 +17,9 @@ import { firestore } from '@/lib/firebase/config';
 import { deleteUser as deleteAuthUser } from 'firebase/auth';
 import type { User as AppUser } from '@/lib/types';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import { Terminal } from 'lucide-react';
+import { Terminal, MicOff, VideoOff } from 'lucide-react';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+
 
 const servers = {
   iceServers: [
@@ -112,16 +114,45 @@ function ChatPageContent() {
         setHasMicPermission(true);
       } catch (error) {
         console.error("Error accessing media devices:", error);
-        setHasCameraPermission(false);
-        setHasMicPermission(false);
+        if (error instanceof DOMException && error.name === 'NotAllowedError') {
+             // Handle permission denied for both camera and mic
+            setHasCameraPermission(false);
+            setHasMicPermission(false);
+        } else if (error instanceof DOMException && error.name === 'NotFoundError') {
+            // Handle no device found
+            setHasCameraPermission(false);
+            setHasMicPermission(false);
+        } else {
+            // Other errors
+            const mediaError = error as Error;
+            if (mediaError.message.includes('video')) setHasCameraPermission(false);
+            if (mediaError.message.includes('audio')) setHasMicPermission(false);
+        }
       }
       
       // 3. Setup WebRTC event handlers
       pc.current.ontrack = (event) => {
-        // Directly attach the remote stream to the video element.
+        // When a remote track is received, attach it to the video element.
         if (remoteVideoRef.current) {
-          remoteVideoRef.current.srcObject = event.streams[0];
-          remoteVideoRef.current.muted = false; // Unmute audio for the remote stream
+            remoteVideoRef.current.srcObject = event.streams[0];
+            // Mute the video element before playing to satisfy browser autoplay policies.
+            remoteVideoRef.current.muted = true; 
+            
+            // Attempt to play the video.
+            const playPromise = remoteVideoRef.current.play();
+            
+            if (playPromise !== undefined) {
+                playPromise.then(_ => {
+                    // Video playback has started. Now we can unmute the audio.
+                    if (remoteVideoRef.current) {
+                       remoteVideoRef.current.muted = false;
+                    }
+                }).catch(error => {
+                    // Autoplay was prevented.
+                    console.error("Remote video play-back was prevented:", error);
+                    // Here you could show an "unmute" button to the user.
+                });
+            }
         }
       };
       
@@ -207,11 +238,6 @@ function ChatPageContent() {
         localStreamRef.current.getTracks().forEach(track => track.stop());
         localStreamRef.current = null;
       }
-
-      if (remoteVideoRef.current && remoteVideoRef.current.srcObject) {
-        const stream = remoteVideoRef.current.srcObject as MediaStream;
-        stream.getTracks().forEach(track => track.stop());
-      }
       
       if (localVideoRef.current) localVideoRef.current.srcObject = null;
       if (remoteVideoRef.current) remoteVideoRef.current.srcObject = null;
@@ -259,13 +285,21 @@ function ChatPageContent() {
 
     if (user && appUser) {
       await updateUserStatus(user.uid, 'searching');
-      const { uid, createdAt, ...queueData } = appUser;
-      await addUserToQueue(user.uid, { ...queueData, status: 'searching' });
+      // Constructing queue data from potentially stale appUser state could be risky.
+      // Let's create a fresh object based on what we know is current.
+      const queueData = {
+          username: appUser.username,
+          gender: appUser.gender,
+          matchPreference: appUser.matchPreference,
+          isCamOn: isCamOn,
+          isMicOn: isMicOn,
+      };
+      await addUserToQueue(user.uid, { status: 'searching', ...queueData });
       router.push('/queue');
     } else {
       router.push('/');
     }
-  }, [chatId, user, appUser, router]);
+  }, [chatId, user, appUser, router, isCamOn, isMicOn]);
   
   const fullUserDelete = useCallback(async () => {
     if (user && auth?.currentUser) {
@@ -309,20 +343,8 @@ function ChatPageContent() {
     <main className="grid h-screen max-h-screen grid-cols-1 lg:grid-cols-[1fr_400px] overflow-hidden">
       <div className="relative flex flex-col items-center justify-between p-4 bg-black/90 h-full">
         
-        {(!hasCameraPermission || !hasMicPermission) && (
-            <Alert variant="destructive" className="absolute top-4 left-4 right-4 z-50 max-w-md mx-auto">
-                <Terminal className="h-4 w-4" />
-                <AlertTitle>Permissions Required</AlertTitle>
-                <AlertDescription>
-                   {!hasCameraPermission && "Camera access was denied. "}
-                   {!hasMicPermission && "Microphone access was denied. "}
-                   Please enable permissions in your browser settings to share your video/audio.
-                </AlertDescription>
-            </Alert>
-        )}
-
         <div className={cn(
-          "grid w-full flex-1 gap-4 transition-all duration-300 pt-16",
+          "grid w-full flex-1 gap-4 transition-all duration-300",
           isLocalVideoMinimized ? "grid-rows-1" : "grid-rows-[1fr_auto] md:grid-rows-1 md:grid-cols-[1fr_300px]"
         )}>
           <div className="relative group/videoplayer w-full h-full min-h-0">
@@ -333,7 +355,7 @@ function ChatPageContent() {
                 isConnecting={isConnecting || !partner}
                 className="h-full"
             >
-              <video ref={remoteVideoRef} className="w-full h-full object-cover" autoPlay playsInline />
+              <video ref={remoteVideoRef} className="w-full h-full object-cover" playsInline />
             </VideoPlayer>
           </div>
           
@@ -346,6 +368,7 @@ function ChatPageContent() {
                   name={appUser?.username || "You"}
                   isMuted={!isMicOn}
                   isCamOff={!isCamOn}
+                  hasPermission={hasCameraPermission}
                   className="h-full"
                 >
                   <video ref={localVideoRef} className="w-full h-full object-cover" autoPlay muted playsInline />
