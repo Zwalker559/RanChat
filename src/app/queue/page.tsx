@@ -29,7 +29,6 @@ export default function QueuePage() {
   const { toast } = useToast();
   const isCancelling = useRef(false);
   const matchFound = useRef(false);
-  const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   const fullUserDelete = useCallback(async () => {
     if (user && auth?.currentUser) {
@@ -47,13 +46,7 @@ export default function QueuePage() {
     if (isCancelling.current) return;
     isCancelling.current = true;
     
-    if (searchTimeoutRef.current) {
-        clearTimeout(searchTimeoutRef.current);
-    }
-    
     if (user) await updateUserStatus(user.uid, 'offline');
-    // No need to call fullUserDelete, user can sign back in later.
-    // Let's just take them home.
     toast({ title: "Search Cancelled", description: "You have left the queue." });
     router.push('/');
   }, [router, toast, user]);
@@ -74,7 +67,6 @@ export default function QueuePage() {
 
   useEffect(() => {
     if (!user || !appUser) {
-        // If auth is still loading, or user genuinely doesn't exist, wait or redirect.
         if (!auth?.currentUser && !user && !auth.loading) {
             router.push('/');
         }
@@ -85,45 +77,31 @@ export default function QueuePage() {
     isCancelling.current = false;
     
     const enterQueueAndSearch = async () => {
-      // Ensure user document exists and status is 'searching'
       await updateUserStatus(user.uid, 'searching');
       const { uid, createdAt, ...queueData } = appUser;
       await addUserToQueue(user.uid, { ...queueData, status: 'searching' });
       
-      // Wait 5 seconds before trying to find a match.
-      searchTimeoutRef.current = setTimeout(async () => {
-        // If we were found by someone else while waiting, don't initiate a search.
-        if (matchFound.current) return;
+      if (matchFound.current) return;
 
-        const match = await findPartner(user.uid, appUser);
-        if (match && !matchFound.current) {
-            matchFound.current = true;
-            router.push(`/chat?chatId=${match.chatId}&partnerUid=${match.partnerUid}&caller=true`);
-        }
-      }, 5000);
+      const match = await findPartner(user.uid, appUser);
+      if (match && !matchFound.current) {
+          matchFound.current = true;
+          router.push(`/chat?chatId=${match.chatId}&partnerUid=${match.partnerUid}&caller=true`);
+      }
     };
 
-    // This listener handles the case where we are chosen by someone else
     const unsubscribePartnerListener = listenForPartner(user.uid, (chatId, partnerUid) => {
         if (chatId && partnerUid && !matchFound.current) {
             matchFound.current = true;
-            if (searchTimeoutRef.current) {
-                clearTimeout(searchTimeoutRef.current);
-            }
             router.push(`/chat?chatId=${chatId}&partnerUid=${partnerUid}&caller=false`);
         }
     });
 
-    // Start the search process
-    setTimeout(enterQueueAndSearch, 5000);
+    enterQueueAndSearch();
 
     return () => {
       unsubscribePartnerListener();
-      if (searchTimeoutRef.current) {
-        clearTimeout(searchTimeoutRef.current);
-      }
       
-      // If we navigate away without finding a match (e.g. back button), go offline.
       if (!matchFound.current && user && !isCancelling.current) {
         updateUserStatus(user.uid, 'offline');
       }
