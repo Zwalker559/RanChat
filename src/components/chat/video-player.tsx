@@ -13,7 +13,7 @@ export function VideoPlayer({ name, isMuted, isCamOff, isConnecting, className, 
 
   return (
     <div className={cn("relative aspect-video w-full overflow-hidden rounded-lg bg-secondary shadow-lg", className)} {...props}>
-      <div className={cn("w-full h-full", showOverlay && "invisible")}>
+      <div className={cn("w-full h-full")}>
         {children}
       </div>
 
