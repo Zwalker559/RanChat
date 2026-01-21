@@ -32,25 +32,23 @@ function ChatPageContent() {
   const { toast } = useToast();
   const { user, appUser } = useAuth();
 
-  // --- Refs for stable objects ---
+  // --- Refs ---
   const localVideoRef = useRef<HTMLVideoElement>(null);
   const remoteVideoRef = useRef<HTMLVideoElement>(null);
   const pc = useRef<RTCPeerConnection | null>(null);
-  const localStreamRef = useRef<MediaStream | null>(null);
   const isUnloading = useRef(false);
-  const initialLoadDone = useRef(false);
 
-  // --- State Management ---
-  const [isConnecting, setIsConnecting] = useState(true);
-  const [isLocalVideoMinimized, setIsLocalVideoMinimized] = useState(false);
-  const [partner, setPartner] = useState<AppUser | null>(null);
+  // --- State ---
+  const [localStream, setLocalStream] = useState<MediaStream | null>(null);
   const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
+  const [partner, setPartner] = useState<AppUser | null>(null);
+  const [isConnecting, setIsConnecting] = useState(true);
   const [isSpeaking, setIsSpeaking] = useState(false);
-
-  // State for user controls, sourced from appUser on initial load
+  const [isLocalVideoMinimized, setIsLocalVideoMinimized] = useState(false);
+  
+  // Controls state
   const [isMicOn, setIsMicOn] = useState(true);
   const [isCamOn, setIsCamOn] = useState(true);
-
   const [hasCameraPermission, setHasCameraPermission] = useState(true);
   const [hasMicPermission, setHasMicPermission] = useState(true);
 
@@ -58,16 +56,7 @@ function ChatPageContent() {
   const partnerUid = searchParams.get('partnerUid');
   const isCaller = searchParams.get('caller') === 'true';
 
-  // Effect 1: Set initial Mic/Cam state from appUser (database) only on first load
-  useEffect(() => {
-    if (appUser && !initialLoadDone.current) {
-      setIsCamOn(appUser.isCamOn);
-      setIsMicOn(appUser.isMicOn);
-      initialLoadDone.current = true;
-    }
-  }, [appUser]);
-
-  // Effect 2: Get user media (camera/mic) and set up local stream
+  // Effect 1: Get user media (camera/mic). This is the first step.
   useEffect(() => {
     let isCancelled = false;
     const getMedia = async () => {
@@ -77,16 +66,19 @@ function ChatPageContent() {
           stream.getTracks().forEach(t => t.stop());
           return;
         }
-        localStreamRef.current = stream;
-        if (localVideoRef.current) {
-          localVideoRef.current.srcObject = stream;
-        }
-        // Set initial track state based on React state when stream is acquired
-        stream.getVideoTracks().forEach(t => t.enabled = isCamOn);
-        stream.getAudioTracks().forEach(t => t.enabled = isMicOn);
 
+        const savedCamOn = appUser?.isCamOn ?? JSON.parse(localStorage.getItem('ran-chat-cam-on') ?? 'true');
+        const savedMicOn = appUser?.isMicOn ?? JSON.parse(localStorage.getItem('ran-chat-mic-on') ?? 'true');
+
+        stream.getVideoTracks().forEach(t => t.enabled = savedCamOn);
+        stream.getAudioTracks().forEach(t => t.enabled = savedMicOn);
+        
+        setIsCamOn(savedCamOn);
+        setIsMicOn(savedMicOn);
         setHasCameraPermission(true);
         setHasMicPermission(true);
+
+        setLocalStream(stream); // This state change triggers the WebRTC effect
       } catch (error) {
         console.error("Error accessing media devices:", error);
         setHasCameraPermission(false);
@@ -94,71 +86,74 @@ function ChatPageContent() {
         toast({
           variant: "destructive",
           title: "Permissions Error",
-          description: "Camera and Microphone access denied. Please enable them in your browser settings to use the chat.",
+          description: "Camera and Microphone access denied. Please enable them to use the chat.",
         });
       }
     };
-    getMedia();
+    if (appUser) { // Wait until we have the user profile to get media
+        getMedia();
+    }
+
     return () => {
       isCancelled = true;
-      if (localStreamRef.current) {
-        localStreamRef.current.getTracks().forEach(track => track.stop());
-        localStreamRef.current = null;
-      }
-      if (localVideoRef.current) {
-        localVideoRef.current.srcObject = null;
-      }
+      // The stream from state is used here for cleanup
     };
-  }, [toast, isCamOn, isMicOn]);
+  }, [toast, appUser]);
 
-  // Effect 3: Main WebRTC connection logic. Triggers after local stream is ready.
+  // Effect 2: Main WebRTC connection logic. Triggers after `localStream` is set.
   useEffect(() => {
-    if (!user || !chatId || !partnerUid || !localStreamRef.current) {
+    if (!user || !chatId || !partnerUid || !localStream) {
       return;
     }
-    setIsConnecting(true);
+
     isUnloading.current = false;
     const unsubscribers: Unsubscribe[] = [];
 
-    // 1. Create Peer Connection
     const peerConnection = new RTCPeerConnection(servers);
     pc.current = peerConnection;
 
-    // 2. Add local stream tracks to the connection
-    localStreamRef.current.getTracks().forEach(track => {
-      try {
-        peerConnection.addTrack(track, localStreamRef.current!);
-      } catch (e) {
-        console.error("Error adding track:", e);
-      }
+    localStream.getTracks().forEach(track => {
+      peerConnection.addTrack(track, localStream);
     });
    
-    // 3. Setup WebRTC event handlers
-    peerConnection.onicecandidate = event => {
-      if (event.candidate && user) {
-        addIceCandidate(chatId, user.uid, event.candidate.toJSON());
-      }
-    };
-
     peerConnection.ontrack = (event) => {
       if (event.streams && event.streams[0]) {
         setRemoteStream(event.streams[0]);
       }
     };
 
-    // 4. Setup Firestore listeners for signaling and presence
+    peerConnection.onicecandidate = event => {
+      if (event.candidate && user) {
+        addIceCandidate(chatId, user.uid, event.candidate.toJSON());
+      }
+    };
+
+    // Use connection state to reliably manage the "connecting" status
+    peerConnection.onconnectionstatechange = () => {
+      if (peerConnection.connectionState === 'connected') {
+        setIsConnecting(false);
+      }
+       if (peerConnection.connectionState === 'failed' || peerConnection.connectionState === 'disconnected' || peerConnection.connectionState === 'closed') {
+           if (!isUnloading.current) {
+                toast({ title: "Partner disconnected" });
+                router.push('/queue');
+           }
+      }
+    };
+
     unsubscribers.push(
       listenForIceCandidates(chatId, partnerUid, (candidate) => {
         peerConnection.addIceCandidate(new RTCIceCandidate(candidate))
           .catch(e => console.error("Error adding received ICE candidate", e));
       })
     );
+
     unsubscribers.push(
       onSnapshot(doc(firestore, 'users', partnerUid), (docSnap) => {
         if (docSnap.exists()) {
           setPartner(docSnap.data() as AppUser);
         } else if (!isUnloading.current) {
-          toast({ title: "Partner has disconnected" });
+          toast({ title: "Partner has left the chat" });
           router.push('/queue');
         }
       })
@@ -172,7 +167,6 @@ function ChatPageContent() {
       })
     );
 
-    // 5. Start Offer/Answer signaling flow
     const startSignaling = async () => {
       try {
         if (isCaller) {
@@ -192,7 +186,6 @@ function ChatPageContent() {
             await createAnswer(chatId, user.uid, { type: answer.type, sdp: answer.sdp });
           }));
         }
-        setIsConnecting(false);
       } catch (error) {
         console.error("Signaling error:", error);
         toast({
@@ -200,49 +193,44 @@ function ChatPageContent() {
           title: "Connection Failed",
           description: "Could not establish a connection. Please try again.",
         });
-        setIsConnecting(false); // Ensure we don't get stuck on loading
       }
     };
     startSignaling();
 
-    // 6. Unified cleanup function
     return () => {
       unsubscribers.forEach(unsub => unsub());
       if (pc.current) {
-        pc.current.getTransceivers().forEach(transceiver => transceiver.stop());
-        pc.current.onicecandidate = null;
-        pc.current.ontrack = null;
         pc.current.close();
         pc.current = null;
       }
+      localStream.getTracks().forEach(track => track.stop());
+      setLocalStream(null);
       setRemoteStream(null);
     };
-  // IMPORTANT: Do not add isCamOn or isMicOn to this dependency array.
-  // Doing so would tear down the entire connection on every toggle.
-  }, [user, chatId, partnerUid, isCaller, router, toast]);
+  }, [localStream, user, chatId, partnerUid, isCaller, router, toast]);
 
-  // Effect 4: Attach remote stream to video element when it becomes available
+  // Effect 3: Attach streams to video elements.
+  useEffect(() => {
+    if (localVideoRef.current && localStream) {
+      localVideoRef.current.srcObject = localStream;
+    }
+  }, [localStream]);
+
   useEffect(() => {
     if (remoteVideoRef.current && remoteStream) {
       remoteVideoRef.current.srcObject = remoteStream;
-      // Attempt to play the video. Muting and then playing is a common strategy
-      // to work around browser autoplay policies. The audio is unmuted by the user
-      // or based on partner's mic state.
-      remoteVideoRef.current.muted = false; // We want to hear the partner
-      remoteVideoRef.current.play().catch(e => console.error("Remote video play failed:", e));
     }
   }, [remoteStream]);
   
-  // Effect 5: Audio activity detection for speaking indicator
+  // Effect 4: Audio activity detection for speaking indicator
   useEffect(() => {
     let animationFrameId: number;
     let audioContext: AudioContext;
     let analyser: AnalyserNode;
     let source: MediaStreamAudioSourceNode;
 
-    if (localStreamRef.current && isMicOn) {
-        const stream = localStreamRef.current;
-        const audioTracks = stream.getAudioTracks();
+    if (localStream && isMicOn) {
+        const audioTracks = localStream.getAudioTracks();
         if (audioTracks.length === 0 || !audioTracks.some(t => t.enabled)) {
             setIsSpeaking(false);
             return;
@@ -255,7 +243,7 @@ function ChatPageContent() {
             analyser.maxDecibels = -10;
             analyser.smoothingTimeConstant = 0.85;
 
-            source = audioContext.createMediaStreamSource(stream);
+            source = audioContext.createMediaStreamSource(localStream);
             source.connect(analyser);
 
             analyser.fftSize = 32;
@@ -286,34 +274,30 @@ function ChatPageContent() {
             audioContext?.close().catch(e => console.error("Error closing audio context", e));
         }
     };
-  }, [isMicOn]);
+  }, [localStream, isMicOn]);
 
 
   // --- User Actions ---
   const handleToggleMic = useCallback(() => {
-    setIsMicOn(prev => {
-        const newMicState = !prev;
-        localStreamRef.current?.getAudioTracks().forEach(t => t.enabled = newMicState);
-        if (user) {
-            updateUser(user.uid, { isMicOn: newMicState });
-            localStorage.setItem('ran-chat-mic-on', JSON.stringify(newMicState));
-        }
-        if (!newMicState) setIsSpeaking(false);
-        return newMicState;
-    });
-  }, [user]);
+    const newMicState = !isMicOn;
+    localStream?.getAudioTracks().forEach(t => t.enabled = newMicState);
+    if (user) {
+        updateUser(user.uid, { isMicOn: newMicState });
+        localStorage.setItem('ran-chat-mic-on', JSON.stringify(newMicState));
+    }
+    if (!newMicState) setIsSpeaking(false);
+    setIsMicOn(newMicState);
+  }, [isMicOn, localStream, user]);
 
   const handleToggleCam = useCallback(() => {
-    setIsCamOn(prev => {
-        const newCamState = !prev;
-        localStreamRef.current?.getVideoTracks().forEach(t => t.enabled = newCamState);
-        if (user) {
-            updateUser(user.uid, { isCamOn: newCamState });
-            localStorage.setItem('ran-chat-cam-on', JSON.stringify(newCamState));
-        }
-        return newCamState;
-    });
-  }, [user]);
+    const newCamState = !isCamOn;
+    localStream?.getVideoTracks().forEach(t => t.enabled = newCamState);
+    if (user) {
+        updateUser(user.uid, { isCamOn: newCamState });
+        localStorage.setItem('ran-chat-cam-on', JSON.stringify(newCamState));
+    }
+    setIsCamOn(newCamState);
+  }, [isCamOn, localStream, user]);
 
   const handleNext = useCallback(async () => {
     isUnloading.current = true;
@@ -332,16 +316,18 @@ function ChatPageContent() {
   
   useEffect(() => {
     const handleBeforeUnload = () => {
-      if (isUnloading.current) return;
+      isUnloading.current = true;
       if (user) {
+        // This is a last resort, as endChat is more thorough
         updateUserStatus(user.uid, 'offline');
+        if(chatId) endChat(chatId);
       }
     };
     window.addEventListener('beforeunload', handleBeforeUnload);
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
-  }, [user]);
+  }, [user, chatId]);
 
-  if (!chatId || !partnerUid) {
+  if (!chatId || !partnerUid || !appUser) {
     return (
         <div className="flex h-screen w-full items-center justify-center bg-background">
             <p className="text-muted-foreground animate-pulse">Initializing Chat...</p>
@@ -378,7 +364,7 @@ function ChatPageContent() {
                   name={appUser?.username || "You"}
                   isMuted={!isMicOn}
                   isCamOff={!isCamOn}
-                  isConnecting={isConnecting && !localStreamRef.current}
+                  isConnecting={!localStream}
                   className="h-full"
                 >
                   <video ref={localVideoRef} className="w-full h-full object-cover" autoPlay muted playsInline />
