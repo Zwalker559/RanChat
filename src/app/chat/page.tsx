@@ -26,6 +26,9 @@ const servers = {
   iceCandidatePoolSize: 10,
 };
 
+const MAX_RETRIES = 3;
+const RETRY_TIMEOUT = 15000; // 15 seconds
+
 function ChatPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -51,6 +54,9 @@ function ChatPageContent() {
   const [isCamOn, setIsCamOn] = useState(true);
   const [hasCameraPermission, setHasCameraPermission] = useState(true);
   const [hasMicPermission, setHasMicPermission] = useState(true);
+
+  // New state for connection retries
+  const [retryAttempt, setRetryAttempt] = useState(0);
 
   const chatId = searchParams.get('chatId');
   const partnerUid = searchParams.get('partnerUid');
@@ -99,14 +105,53 @@ function ChatPageContent() {
     };
   }, [toast, appUser]);
 
-  // Effect 2: Main WebRTC connection logic. Triggers after `localStream` is set.
+  // Effect for handling connection timeouts and retries
+  useEffect(() => {
+    if (!isConnecting || retryAttempt >= MAX_RETRIES) return;
+
+    const timeoutId = setTimeout(() => {
+      // If we are still connecting after the timeout, trigger a retry.
+      if (isConnecting) {
+        toast({
+          variant: "destructive",
+          title: "Connection timed out",
+          description: `Retrying... (Attempt ${retryAttempt + 1}/${MAX_RETRIES})`,
+        });
+        setRetryAttempt(prev => prev + 1);
+      }
+    }, RETRY_TIMEOUT);
+
+    return () => clearTimeout(timeoutId);
+  }, [isConnecting, retryAttempt, toast]);
+
+
+  // Effect 2: Main WebRTC connection logic. Triggers after `localStream` is set or retryAttempt changes.
   useEffect(() => {
     if (!user || !chatId || !partnerUid || !localStream) {
       return;
     }
 
+    if (retryAttempt >= MAX_RETRIES) {
+        toast({
+            variant: "destructive",
+            title: "Failed to connect",
+            description: "Could not establish a connection. Returning to the queue.",
+        });
+        const timer = setTimeout(() => {
+            if (chatId) endChat(chatId);
+            router.push('/queue');
+        }, 1500);
+        return () => clearTimeout(timer);
+    }
+
+    setIsConnecting(true); // Ensure connecting state is true for each attempt
     isUnloading.current = false;
     const unsubscribers: Unsubscribe[] = [];
+
+    // Clean up any existing peer connection before creating a new one for the retry
+    if (pc.current) {
+        pc.current.close();
+    }
 
     const peerConnection = new RTCPeerConnection(servers);
     pc.current = peerConnection;
@@ -127,10 +172,10 @@ function ChatPageContent() {
       }
     };
 
-    // Use connection state to reliably manage the "connecting" status
     peerConnection.onconnectionstatechange = () => {
       if (peerConnection.connectionState === 'connected') {
         setIsConnecting(false);
+        setRetryAttempt(0); // Success! Reset retry counter.
       }
        if (peerConnection.connectionState === 'failed' || peerConnection.connectionState === 'disconnected' || peerConnection.connectionState === 'closed') {
            if (!isUnloading.current) {
@@ -142,8 +187,10 @@ function ChatPageContent() {
 
     unsubscribers.push(
       listenForIceCandidates(chatId, partnerUid, (candidate) => {
-        peerConnection.addIceCandidate(new RTCIceCandidate(candidate))
-          .catch(e => console.error("Error adding received ICE candidate", e));
+        if (pc.current?.signalingState !== 'closed') {
+            pc.current.addIceCandidate(new RTCIceCandidate(candidate))
+              .catch(e => console.error("Error adding received ICE candidate", e));
+        }
       })
     );
 
@@ -170,8 +217,6 @@ function ChatPageContent() {
       try {
         if (isCaller) {
           unsubscribers.push(listenForAnswer(chatId, partnerUid, async (answer) => {
-             // This check was too strict and caused race conditions.
-             // Relying on the browser's internal state machine is more robust.
              if (peerConnection.signalingState !== 'closed') {
                 await peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
              }
@@ -204,19 +249,13 @@ function ChatPageContent() {
       isUnloading.current = true;
       unsubscribers.forEach(unsub => unsub());
       if (pc.current) {
-        pc.current.getTransceivers().forEach(transceiver => {
-            if (transceiver.sender.track) {
-                transceiver.sender.track.stop();
-            }
-        });
         pc.current.close();
         pc.current = null;
       }
-      localStream?.getTracks().forEach(track => track.stop());
-      setLocalStream(null);
+      // Do not stop local stream on cleanup, so it persists across retries
       setRemoteStream(null);
     };
-  }, [user, chatId, partnerUid, isCaller, router, toast, localStream]);
+  }, [user, chatId, partnerUid, isCaller, router, toast, localStream, retryAttempt]);
 
   // Effect 3: Attach streams to video elements.
   useEffect(() => {
@@ -329,14 +368,21 @@ function ChatPageContent() {
     const handleBeforeUnload = () => {
       isUnloading.current = true;
       if (user && chatId) {
+        // Stop media streams on unload to turn off camera light
+        localStream?.getTracks().forEach(track => track.stop());
         endChat(chatId);
-        // This is a last resort, as endChat is more thorough
         updateUserStatus(user.uid, 'offline');
       }
     };
     window.addEventListener('beforeunload', handleBeforeUnload);
-    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
-  }, [user, chatId]);
+    return () => {
+        window.removeEventListener('beforeunload', handleBeforeUnload);
+        // Also cleanup streams if the component unmounts for other reasons (e.g. navigation)
+        if (isUnloading.current) {
+           localStream?.getTracks().forEach(track => track.stop());
+        }
+    }
+  }, [user, chatId, localStream]);
 
   if (!chatId || !partnerUid || !appUser) {
     return (
