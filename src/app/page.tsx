@@ -92,19 +92,6 @@ export default function Home() {
     }
   }, [appUser, form]);
 
-  useEffect(() => {
-    const handleBeforeUnload = () => {
-      // If a user is navigating away from any page that isn't the chat page,
-      // and isn't in the process of matching, their status should be set to offline.
-      // This is a catch-all for closing tabs/browsers.
-      if (user) {
-        updateUserStatus(user.uid, 'offline');
-      }
-    };
-    window.addEventListener('beforeunload', handleBeforeUnload);
-    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
-  }, [user]);
-
 
   async function onSubmit(values: z.infer<typeof formSchema>) {
     if (!user) {
