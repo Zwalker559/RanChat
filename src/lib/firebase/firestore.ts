@@ -141,14 +141,19 @@ export const findPartner = async (
       const matchResult = await runTransaction(firestore, async (transaction) => {
         const partnerQueueRef = doc(firestore, 'queue', partnerUid);
         const userQueueRef = doc(firestore, 'queue', uid);
+        const userRef = doc(firestore, 'users', uid);
+        const partnerUserRef = doc(firestore, 'users', partnerUid);
 
-        // Check if both users are still in the queue
-        const partnerQueueSnap = await transaction.get(partnerQueueRef);
-        const userQueueSnap = await transaction.get(userQueueRef);
+        // Check if both users are still in the queue AND their user profiles exist
+        const [partnerQueueSnap, userQueueSnap, userSnap, partnerUserSnap] = await Promise.all([
+             transaction.get(partnerQueueRef),
+             transaction.get(userQueueRef),
+             transaction.get(userRef),
+             transaction.get(partnerUserRef)
+        ]);
 
-        if (!partnerQueueSnap.exists() || !userQueueSnap.exists()) {
-          // One of the users is no longer in the queue, so this match is void.
-          // Returning null from the transaction function will abort it.
+        if (!partnerQueueSnap.exists() || !userQueueSnap.exists() || !userSnap.exists() || !partnerUserSnap.exists()) {
+          // One of the users is no longer in the queue or their profile is gone. Match is void.
           return null;
         }
 
@@ -161,9 +166,6 @@ export const findPartner = async (
           participants: [uid, partnerUid],
           createdAt: serverTimestamp(),
         };
-
-        const userRef = doc(firestore, 'users', uid);
-        const partnerUserRef = doc(firestore, 'users', partnerUid);
 
         // Perform all writes atomically
         transaction.set(chatRef, chatData);
