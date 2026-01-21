@@ -81,6 +81,10 @@ function ChatPageContent() {
         if (localVideoRef.current) {
           localVideoRef.current.srcObject = stream;
         }
+        // Set initial track state based on React state when stream is acquired
+        stream.getVideoTracks().forEach(t => t.enabled = isCamOn);
+        stream.getAudioTracks().forEach(t => t.enabled = isMicOn);
+
         setHasCameraPermission(true);
         setHasMicPermission(true);
       } catch (error) {
@@ -105,7 +109,7 @@ function ChatPageContent() {
         localVideoRef.current.srcObject = null;
       }
     };
-  }, [toast]);
+  }, [toast, isCamOn, isMicOn]);
 
   // Effect 3: Main WebRTC connection logic. Triggers after local stream is ready.
   useEffect(() => {
@@ -128,10 +132,7 @@ function ChatPageContent() {
         console.error("Error adding track:", e);
       }
     });
-    // Set initial track state based on React state
-    localStreamRef.current.getVideoTracks().forEach(t => t.enabled = isCamOn);
-    localStreamRef.current.getAudioTracks().forEach(t => t.enabled = isMicOn);
-
+   
     // 3. Setup WebRTC event handlers
     peerConnection.onicecandidate = event => {
       if (event.candidate && user) {
@@ -173,24 +174,34 @@ function ChatPageContent() {
 
     // 5. Start Offer/Answer signaling flow
     const startSignaling = async () => {
-      if (isCaller) {
-        unsubscribers.push(listenForAnswer(chatId, partnerUid, async (answer) => {
-          if (peerConnection.currentRemoteDescription) return;
-          await peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
-        }));
-        const offer = await peerConnection.createOffer();
-        await peerConnection.setLocalDescription(offer);
-        await createOffer(chatId, user.uid, { type: offer.type, sdp: offer.sdp });
-      } else {
-        unsubscribers.push(listenForOffer(chatId, partnerUid, async (offer) => {
-          if (peerConnection.remoteDescription) return;
-          await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
-          const answer = await peerConnection.createAnswer();
-          await peerConnection.setLocalDescription(answer);
-          await createAnswer(chatId, user.uid, { type: answer.type, sdp: answer.sdp });
-        }));
+      try {
+        if (isCaller) {
+          unsubscribers.push(listenForAnswer(chatId, partnerUid, async (answer) => {
+            if (peerConnection.currentRemoteDescription) return;
+            await peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
+          }));
+          const offer = await peerConnection.createOffer();
+          await peerConnection.setLocalDescription(offer);
+          await createOffer(chatId, user.uid, { type: offer.type, sdp: offer.sdp });
+        } else {
+          unsubscribers.push(listenForOffer(chatId, partnerUid, async (offer) => {
+            if (peerConnection.remoteDescription) return;
+            await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
+            const answer = await peerConnection.createAnswer();
+            await peerConnection.setLocalDescription(answer);
+            await createAnswer(chatId, user.uid, { type: answer.type, sdp: answer.sdp });
+          }));
+        }
+        setIsConnecting(false);
+      } catch (error) {
+        console.error("Signaling error:", error);
+        toast({
+          variant: "destructive",
+          title: "Connection Failed",
+          description: "Could not establish a connection. Please try again.",
+        });
+        setIsConnecting(false); // Ensure we don't get stuck on loading
       }
-      setIsConnecting(false);
     };
     startSignaling();
 
@@ -206,12 +217,19 @@ function ChatPageContent() {
       }
       setRemoteStream(null);
     };
-  }, [user, chatId, partnerUid, isCaller, router, toast, isCamOn, isMicOn]);
+  // IMPORTANT: Do not add isCamOn or isMicOn to this dependency array.
+  // Doing so would tear down the entire connection on every toggle.
+  }, [user, chatId, partnerUid, isCaller, router, toast]);
 
   // Effect 4: Attach remote stream to video element when it becomes available
   useEffect(() => {
     if (remoteVideoRef.current && remoteStream) {
       remoteVideoRef.current.srcObject = remoteStream;
+      // Attempt to play the video. Muting and then playing is a common strategy
+      // to work around browser autoplay policies. The audio is unmuted by the user
+      // or based on partner's mic state.
+      remoteVideoRef.current.muted = false; // We want to hear the partner
+      remoteVideoRef.current.play().catch(e => console.error("Remote video play failed:", e));
     }
   }, [remoteStream]);
   
