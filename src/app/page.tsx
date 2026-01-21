@@ -6,7 +6,9 @@ import { useForm } from "react-hook-form";
 import * as z from "zod";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/hooks/use-auth";
-import { createUser, isUsernameTaken, addUserToQueue, updateUserStatus } from "@/lib/firebase/firestore";
+import { isUsernameTaken, addUserToQueue, updateUserStatus } from "@/lib/firebase/firestore";
+import { doc, setDoc, serverTimestamp } from "firebase/firestore";
+import { firestore } from "@/lib/firebase/config";
 import { Button } from "@/components/ui/button";
 import {
   Form,
@@ -122,7 +124,7 @@ export default function Home() {
         }
     }
     
-    const userData = {
+    const userProfileData = {
       username: values.username,
       gender: values.gender,
       matchPreference: values.matchPreference,
@@ -130,15 +132,21 @@ export default function Home() {
       isMicOn: isMicOn,
     };
     
-    await createUser(user.uid, userData);
+    // Create/update user document with 'searching' status directly to avoid race conditions.
+    const userDocData = {
+      ...userProfileData,
+      status: 'searching',
+      createdAt: serverTimestamp(),
+    };
+    const userRef = doc(firestore, 'users', user.uid);
+    await setDoc(userRef, userDocData, { merge: true });
     
     // Now that user is created/updated, add to queue
-    await updateUserStatus(user.uid, 'searching');
     await addUserToQueue(user.uid, {
         uid: user.uid,
         status: 'searching',
         createdAt: new Date(), // This will be replaced by server timestamp
-        ...userData
+        ...userProfileData
     });
 
 
