@@ -116,9 +116,16 @@ function ChatPageContent() {
     });
    
     peerConnection.ontrack = (event) => {
-      if (event.streams && event.streams[0]) {
-        setRemoteStream(event.streams[0]);
-      }
+        if (event.streams && event.streams[0]) {
+            setRemoteStream(event.streams[0]);
+        } else {
+            // Fallback for older browsers
+            const newStream = new MediaStream();
+            event.track.onunmute = () => {
+                newStream.addTrack(event.track);
+                setRemoteStream(newStream);
+            };
+        }
     };
 
     peerConnection.onicecandidate = event => {
@@ -170,7 +177,8 @@ function ChatPageContent() {
       try {
         if (isCaller) {
           unsubscribers.push(listenForAnswer(chatId, partnerUid, async (answer) => {
-             if (peerConnection.signalingState !== 'stable') {
+             // Only set the remote description if we're in the correct state
+             if (peerConnection.signalingState === 'have-local-offer') {
                 await peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
              }
           }));
@@ -197,12 +205,18 @@ function ChatPageContent() {
     startSignaling();
 
     return () => {
+      isUnloading.current = true;
       unsubscribers.forEach(unsub => unsub());
       if (pc.current) {
+        pc.current.getTransceivers().forEach(transceiver => {
+            if (transceiver.sender.track) {
+                transceiver.sender.track.stop();
+            }
+        });
         pc.current.close();
         pc.current = null;
       }
-      localStream.getTracks().forEach(track => track.stop());
+      localStream?.getTracks().forEach(track => track.stop());
       setLocalStream(null);
       setRemoteStream(null);
     };
@@ -318,10 +332,10 @@ function ChatPageContent() {
   useEffect(() => {
     const handleBeforeUnload = () => {
       isUnloading.current = true;
-      if (user) {
+      if (user && chatId) {
+        endChat(chatId);
         // This is a last resort, as endChat is more thorough
         updateUserStatus(user.uid, 'offline');
-        if(chatId) endChat(chatId);
       }
     };
     window.addEventListener('beforeunload', handleBeforeUnload);
@@ -419,5 +433,3 @@ export default function ChatPage() {
         </Suspense>
     )
 }
-
-    
