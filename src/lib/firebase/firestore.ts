@@ -118,7 +118,12 @@ export const findPartner = async (
   const querySnapshot = await getDocs(q);
 
   const potentialPartners = querySnapshot.docs
-    .map(doc => ({ id: doc.id, ...doc.data() } as User & { id: string }))
+    .map(doc => {
+        const data = doc.data();
+        // The queue doc has a server timestamp which we can't use directly.
+        const { timestamp, ...rest } = data;
+        return { id: doc.id, ...rest };
+    })
     .filter(user => user.id !== uid);
 
   if (potentialPartners.length === 0) {
@@ -134,30 +139,42 @@ export const findPartner = async (
   const otherMatches = potentialPartners.filter(partner => !preferredMatches.some(p => p.id === partner.id));
   const sortedPartners = [...preferredMatches, ...otherMatches];
 
-  // Try to match with each potential partner within a transaction
+  // Try to match with each potential partner
   for (const partner of sortedPartners) {
     const partnerUid = partner.id;
+
+    // Ensure the partner has a user document. If not, create one from queue data.
+    const partnerUserRef = doc(firestore, 'users', partnerUid);
+    const partnerUserSnap = await getDoc(partnerUserRef);
+
+    if (!partnerUserSnap.exists()) {
+        console.warn(`User document for ${partnerUid} not found. Re-creating from queue data.`);
+        const { id, uid, ...userDataFromQueue } = partner as any;
+        const newUserDoc = {
+            ...userDataFromQueue,
+            createdAt: serverTimestamp()
+        };
+        await setDoc(partnerUserRef, newUserDoc);
+    }
+
     try {
       const matchResult = await runTransaction(firestore, async (transaction) => {
         const partnerQueueRef = doc(firestore, 'queue', partnerUid);
         const userQueueRef = doc(firestore, 'queue', uid);
         const userRef = doc(firestore, 'users', uid);
-        const partnerUserRef = doc(firestore, 'users', partnerUid);
+        const freshPartnerUserRef = doc(firestore, 'users', partnerUid);
 
-        // Check if both users are still in the queue AND their user profiles exist
-        const [partnerQueueSnap, userQueueSnap, userSnap, partnerUserSnap] = await Promise.all([
+        const [partnerQueueSnap, userQueueSnap, userSnap, freshPartnerUserSnap] = await Promise.all([
              transaction.get(partnerQueueRef),
              transaction.get(userQueueRef),
              transaction.get(userRef),
-             transaction.get(partnerUserRef)
+             transaction.get(freshPartnerUserRef)
         ]);
 
-        if (!partnerQueueSnap.exists() || !userQueueSnap.exists() || !userSnap.exists() || !partnerUserSnap.exists()) {
-          // One of the users is no longer in the queue or their profile is gone. Match is void.
+        if (!partnerQueueSnap.exists() || !userQueueSnap.exists() || !userSnap.exists() || !freshPartnerUserSnap.exists()) {
           return null;
         }
 
-        // Both users are in the queue, proceed with the match.
         const chatId = doc(collection(firestore, 'chats')).id;
         const chatRef = doc(firestore, 'chats', chatId);
 
@@ -167,24 +184,20 @@ export const findPartner = async (
           createdAt: serverTimestamp(),
         };
 
-        // Perform all writes atomically
         transaction.set(chatRef, chatData);
         transaction.delete(userQueueRef);
         transaction.delete(partnerQueueRef);
         transaction.update(userRef, { status: 'in-chat' });
-        transaction.update(partnerUserRef, { status: 'in-chat' });
+        transaction.update(freshPartnerUserRef, { status: 'in-chat' });
 
         return { chatId, partnerUid };
       });
 
-      // If matchResult is not null, the transaction was successful and we have a match.
       if (matchResult) {
         console.log(`Match found via transaction! Chat: ${matchResult.chatId} between ${uid} and ${partnerUid}`);
         return matchResult;
       }
     } catch (error) {
-      // The transaction failed, likely due to contention (another user matched first).
-      // This is expected behavior. We log it and let the loop try the next partner.
       console.log(`Matchmaking transaction failed for partner ${partnerUid}. This is likely a normal race condition.`, error);
     }
   }
