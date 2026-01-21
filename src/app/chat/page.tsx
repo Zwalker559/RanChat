@@ -170,7 +170,9 @@ function ChatPageContent() {
       try {
         if (isCaller) {
           unsubscribers.push(listenForAnswer(chatId, partnerUid, async (answer) => {
-            await peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
+             if (peerConnection.signalingState !== 'stable') {
+                await peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
+             }
           }));
           const offer = await peerConnection.createOffer();
           await peerConnection.setLocalDescription(offer);
@@ -276,25 +278,27 @@ function ChatPageContent() {
 
   // --- User Actions ---
   const handleToggleMic = useCallback(() => {
-    const newMicState = !isMicOn;
-    localStream?.getAudioTracks().forEach(t => t.enabled = newMicState);
-    if (user) {
-        updateUser(user.uid, { isMicOn: newMicState });
-        localStorage.setItem('ran-chat-mic-on', JSON.stringify(newMicState));
-    }
-    if (!newMicState) setIsSpeaking(false);
-    setIsMicOn(newMicState);
-  }, [isMicOn, localStream, user]);
+    setIsMicOn(prev => {
+        const newMicState = !prev;
+        localStream?.getAudioTracks().forEach(t => t.enabled = newMicState);
+        if (user) {
+            updateUser(user.uid, { isMicOn: newMicState });
+        }
+        if (!newMicState) setIsSpeaking(false);
+        return newMicState;
+    });
+  }, [localStream, user]);
 
   const handleToggleCam = useCallback(() => {
-    const newCamState = !isCamOn;
-    localStream?.getVideoTracks().forEach(t => t.enabled = newCamState);
-    if (user) {
-        updateUser(user.uid, { isCamOn: newCamState });
-        localStorage.setItem('ran-chat-cam-on', JSON.stringify(newCamState));
-    }
-    setIsCamOn(newCamState);
-  }, [isCamOn, localStream, user]);
+    setIsCamOn(prev => {
+        const newCamState = !prev;
+        localStream?.getVideoTracks().forEach(t => t.enabled = newCamState);
+        if (user) {
+            updateUser(user.uid, { isCamOn: newCamState });
+        }
+        return newCamState;
+    });
+  }, [localStream, user]);
 
   const handleNext = useCallback(async () => {
     isUnloading.current = true;
@@ -415,3 +419,5 @@ export default function ChatPage() {
         </Suspense>
     )
 }
+
+    
