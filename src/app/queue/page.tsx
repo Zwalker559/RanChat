@@ -101,10 +101,6 @@ export default function QueuePage() {
 
     return () => {
       unsubscribePartnerListener();
-      
-      if (!matchFound.current && user && !isCancelling.current) {
-        updateUserStatus(user.uid, 'offline');
-      }
     };
   }, [user, appUser, router, auth]);
 
