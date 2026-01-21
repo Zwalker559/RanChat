@@ -67,8 +67,8 @@ function ChatPageContent() {
           return;
         }
 
-        const savedCamOn = appUser?.isCamOn ?? JSON.parse(localStorage.getItem('ran-chat-cam-on') ?? 'true');
-        const savedMicOn = appUser?.isMicOn ?? JSON.parse(localStorage.getItem('ran-chat-mic-on') ?? 'true');
+        const savedCamOn = appUser?.isCamOn ?? true;
+        const savedMicOn = appUser?.isMicOn ?? true;
 
         stream.getVideoTracks().forEach(t => t.enabled = savedCamOn);
         stream.getAudioTracks().forEach(t => t.enabled = savedMicOn);
@@ -96,7 +96,6 @@ function ChatPageContent() {
 
     return () => {
       isCancelled = true;
-      // The stream from state is used here for cleanup
     };
   }, [toast, appUser]);
 
@@ -171,7 +170,6 @@ function ChatPageContent() {
       try {
         if (isCaller) {
           unsubscribers.push(listenForAnswer(chatId, partnerUid, async (answer) => {
-            if (peerConnection.currentRemoteDescription) return;
             await peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
           }));
           const offer = await peerConnection.createOffer();
@@ -179,7 +177,6 @@ function ChatPageContent() {
           await createOffer(chatId, user.uid, { type: offer.type, sdp: offer.sdp });
         } else {
           unsubscribers.push(listenForOffer(chatId, partnerUid, async (offer) => {
-            if (peerConnection.remoteDescription) return;
             await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
             const answer = await peerConnection.createAnswer();
             await peerConnection.setLocalDescription(answer);
