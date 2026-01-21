@@ -32,92 +32,54 @@ function ChatPageContent() {
   const { toast } = useToast();
   const { user, appUser } = useAuth();
 
-  // --- State Management ---
-  const [isConnecting, setIsConnecting] = useState(true);
-  const [isLocalVideoMinimized, setIsLocalVideoMinimized] = useState(false);
-  const [partner, setPartner] = useState<AppUser | null>(null);
-  const [hasCameraPermission, setHasCameraPermission] = useState(true);
-  const [hasMicPermission, setHasMicPermission] = useState(true);
-  const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
-  const [isSpeaking, setIsSpeaking] = useState(false);
-  const [localStreamReady, setLocalStreamReady] = useState(false);
-
-
-  const [isMicOn, setIsMicOn] = useState(() => {
-    if (typeof window === 'undefined') return true;
-    const saved = localStorage.getItem('ran-chat-mic-on');
-    return saved !== null ? JSON.parse(saved) : true;
-  });
-  const [isCamOn, setIsCamOn] = useState(() => {
-    if (typeof window === 'undefined') return true;
-    const saved = localStorage.getItem('ran-chat-cam-on');
-    return saved !== null ? JSON.parse(saved) : true;
-  });
-  
-  // --- Refs for stable objects across renders ---
+  // --- Refs for stable objects ---
   const localVideoRef = useRef<HTMLVideoElement>(null);
   const remoteVideoRef = useRef<HTMLVideoElement>(null);
   const pc = useRef<RTCPeerConnection | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
   const isUnloading = useRef(false);
+  const initialLoadDone = useRef(false);
+
+  // --- State Management ---
+  const [isConnecting, setIsConnecting] = useState(true);
+  const [isLocalVideoMinimized, setIsLocalVideoMinimized] = useState(false);
+  const [partner, setPartner] = useState<AppUser | null>(null);
+  const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
+  const [isSpeaking, setIsSpeaking] = useState(false);
+
+  // State for user controls, sourced from appUser on initial load
+  const [isMicOn, setIsMicOn] = useState(true);
+  const [isCamOn, setIsCamOn] = useState(true);
+
+  const [hasCameraPermission, setHasCameraPermission] = useState(true);
+  const [hasMicPermission, setHasMicPermission] = useState(true);
 
   const chatId = searchParams.get('chatId');
   const partnerUid = searchParams.get('partnerUid');
   const isCaller = searchParams.get('caller') === 'true';
 
-  // This effect safely attaches the remote stream to the video element when it's ready.
+  // Effect 1: Set initial Mic/Cam state from appUser (database) only on first load
   useEffect(() => {
-    if (remoteVideoRef.current && remoteStream) {
-      if (remoteVideoRef.current.srcObject !== remoteStream) {
-        remoteVideoRef.current.srcObject = remoteStream;
-      }
+    if (appUser && !initialLoadDone.current) {
+      setIsCamOn(appUser.isCamOn);
+      setIsMicOn(appUser.isMicOn);
+      initialLoadDone.current = true;
     }
-  }, [remoteStream]);
+  }, [appUser]);
 
-
-  // Main setup and teardown effect
+  // Effect 2: Get user media (camera/mic) and set up local stream
   useEffect(() => {
-    if (!user || !chatId || !partnerUid) {
-      return;
-    }
-
     let isCancelled = false;
-    const unsubscribers: Unsubscribe[] = [];
-    
-    // 1. Create Peer Connection INSTANCE immediately
-    const peerConnection = new RTCPeerConnection(servers);
-    pc.current = peerConnection;
-    setIsConnecting(true);
-    setRemoteStream(null);
-    isUnloading.current = false;
-    
-    // 2. Setup WebRTC event handlers on the instance
-    peerConnection.onicecandidate = event => {
-      if (event.candidate && user) {
-        addIceCandidate(chatId, user.uid, event.candidate.toJSON());
-      }
-    };
-    
-    peerConnection.ontrack = (event) => {
-      event.streams[0].getTracks().forEach((track) => {
-        setRemoteStream((prevStream) => {
-          const newStream = prevStream ? new MediaStream(prevStream) : new MediaStream();
-          if (!newStream.getTrackById(track.id)) {
-            newStream.addTrack(track);
-          }
-          return newStream;
-        });
-      });
-    };
-
-    const setupAndStart = async () => {
-      // 3. Get User Media
-      let stream: MediaStream;
+    const getMedia = async () => {
       try {
-        stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-        if (isCancelled) { 
-          stream.getTracks().forEach(t => t.stop()); 
-          return; 
+        const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+        if (isCancelled) {
+          stream.getTracks().forEach(t => t.stop());
+          return;
+        }
+        localStreamRef.current = stream;
+        if (localVideoRef.current) {
+          localVideoRef.current.srcObject = stream;
         }
         setHasCameraPermission(true);
         setHasMicPermission(true);
@@ -125,123 +87,142 @@ function ChatPageContent() {
         console.error("Error accessing media devices:", error);
         setHasCameraPermission(false);
         setHasMicPermission(false);
-        setIsConnecting(false);
         toast({
-            variant: "destructive",
-            title: "Permissions Error",
-            description: "Camera and Microphone access denied. Please enable in your browser settings.",
+          variant: "destructive",
+          title: "Permissions Error",
+          description: "Camera and Microphone access denied. Please enable them in your browser settings to use the chat.",
         });
-        return;
       }
-
-      // 4. Attach media to local elements and connection
-      localStreamRef.current = stream;
+    };
+    getMedia();
+    return () => {
+      isCancelled = true;
+      if (localStreamRef.current) {
+        localStreamRef.current.getTracks().forEach(track => track.stop());
+        localStreamRef.current = null;
+      }
       if (localVideoRef.current) {
-        localVideoRef.current.srcObject = stream;
+        localVideoRef.current.srcObject = null;
       }
-      setLocalStreamReady(true);
-      
-      stream.getVideoTracks().forEach(t => t.enabled = isCamOn);
-      stream.getAudioTracks().forEach(t => t.enabled = isMicOn);
+    };
+  }, [toast]);
 
-      stream.getTracks().forEach(track => {
-        try {
-          peerConnection.addTrack(track, stream);
-        } catch (e) {
-          console.error("Error adding track:", e);
+  // Effect 3: Main WebRTC connection logic. Triggers after local stream is ready.
+  useEffect(() => {
+    if (!user || !chatId || !partnerUid || !localStreamRef.current) {
+      return;
+    }
+    setIsConnecting(true);
+    isUnloading.current = false;
+    const unsubscribers: Unsubscribe[] = [];
+
+    // 1. Create Peer Connection
+    const peerConnection = new RTCPeerConnection(servers);
+    pc.current = peerConnection;
+
+    // 2. Add local stream tracks to the connection
+    localStreamRef.current.getTracks().forEach(track => {
+      try {
+        peerConnection.addTrack(track, localStreamRef.current!);
+      } catch (e) {
+        console.error("Error adding track:", e);
+      }
+    });
+    // Set initial track state based on React state
+    localStreamRef.current.getVideoTracks().forEach(t => t.enabled = isCamOn);
+    localStreamRef.current.getAudioTracks().forEach(t => t.enabled = isMicOn);
+
+    // 3. Setup WebRTC event handlers
+    peerConnection.onicecandidate = event => {
+      if (event.candidate && user) {
+        addIceCandidate(chatId, user.uid, event.candidate.toJSON());
+      }
+    };
+
+    peerConnection.ontrack = (event) => {
+      if (event.streams && event.streams[0]) {
+        setRemoteStream(event.streams[0]);
+      }
+    };
+
+    // 4. Setup Firestore listeners for signaling and presence
+    unsubscribers.push(
+      listenForIceCandidates(chatId, partnerUid, (candidate) => {
+        peerConnection.addIceCandidate(new RTCIceCandidate(candidate))
+          .catch(e => console.error("Error adding received ICE candidate", e));
+      })
+    );
+    unsubscribers.push(
+      onSnapshot(doc(firestore, 'users', partnerUid), (docSnap) => {
+        if (docSnap.exists()) {
+          setPartner(docSnap.data() as AppUser);
+        } else if (!isUnloading.current) {
+          toast({ title: "Partner has disconnected" });
+          router.push('/queue');
         }
-      });
-      
-      // 5. Set up all Firestore listeners
-      unsubscribers.push(
-        listenForIceCandidates(chatId, partnerUid, (candidate) => {
-          peerConnection.addIceCandidate(new RTCIceCandidate(candidate))
-            .catch(e => console.error("Error adding received ICE candidate", e));
-        })
-      );
-      
-      unsubscribers.push(
-        onSnapshot(doc(firestore, 'users', partnerUid), (docSnap) => {
-          if (docSnap.exists()) {
-            setPartner(docSnap.data() as AppUser);
-          } else {
-            if (!isUnloading.current) {
-              toast({ title: "Partner has disconnected" });
-              router.push('/queue');
-            }
-          }
-        })
-      );
-      
-      unsubscribers.push(
-        onSnapshot(doc(firestore, 'chats', chatId), (docSnap) => {
-          if (!docSnap.exists() && !isUnloading.current) {
-             toast({ title: "Chat ended" });
-             router.push('/queue');
-          }
-        })
-      );
+      })
+    );
+    unsubscribers.push(
+      onSnapshot(doc(firestore, 'chats', chatId), (docSnap) => {
+        if (!docSnap.exists() && !isUnloading.current) {
+          toast({ title: "Chat ended" });
+          router.push('/queue');
+        }
+      })
+    );
 
-      // 6. Start the signaling process (Offer/Answer)
+    // 5. Start Offer/Answer signaling flow
+    const startSignaling = async () => {
       if (isCaller) {
         unsubscribers.push(listenForAnswer(chatId, partnerUid, async (answer) => {
-            if (peerConnection.currentRemoteDescription) return;
-            await peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
+          if (peerConnection.currentRemoteDescription) return;
+          await peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
         }));
-        
         const offer = await peerConnection.createOffer();
         await peerConnection.setLocalDescription(offer);
         await createOffer(chatId, user.uid, { type: offer.type, sdp: offer.sdp });
       } else {
         unsubscribers.push(listenForOffer(chatId, partnerUid, async (offer) => {
-            if (peerConnection.remoteDescription) return;
-            await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
-            const answer = await peerConnection.createAnswer();
-            await peerConnection.setLocalDescription(answer);
-            await createAnswer(chatId, user.uid, { type: answer.type, sdp: answer.sdp });
+          if (peerConnection.remoteDescription) return;
+          await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
+          const answer = await peerConnection.createAnswer();
+          await peerConnection.setLocalDescription(answer);
+          await createAnswer(chatId, user.uid, { type: answer.type, sdp: answer.sdp });
         }));
       }
-
       setIsConnecting(false);
     };
+    startSignaling();
 
-    setupAndStart();
-    
-    // 7. Unified cleanup function
+    // 6. Unified cleanup function
     return () => {
-      isCancelled = true;
-      console.log("Cleaning up chat session...");
-      
       unsubscribers.forEach(unsub => unsub());
-
       if (pc.current) {
         pc.current.getTransceivers().forEach(transceiver => transceiver.stop());
-        pc.current.ontrack = null;
         pc.current.onicecandidate = null;
+        pc.current.ontrack = null;
         pc.current.close();
         pc.current = null;
       }
-
-      if (localStreamRef.current) {
-        localStreamRef.current.getTracks().forEach(track => track.stop());
-        localStreamRef.current = null;
-      }
-      
-      if (localVideoRef.current) localVideoRef.current.srcObject = null;
-      if (remoteVideoRef.current) remoteVideoRef.current.srcObject = null;
       setRemoteStream(null);
-      setLocalStreamReady(false);
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user, chatId, partnerUid, isCaller]);
+  }, [user, chatId, partnerUid, isCaller, router, toast, isCamOn, isMicOn]);
 
+  // Effect 4: Attach remote stream to video element when it becomes available
+  useEffect(() => {
+    if (remoteVideoRef.current && remoteStream) {
+      remoteVideoRef.current.srcObject = remoteStream;
+    }
+  }, [remoteStream]);
+  
+  // Effect 5: Audio activity detection for speaking indicator
   useEffect(() => {
     let animationFrameId: number;
     let audioContext: AudioContext;
     let analyser: AnalyserNode;
     let source: MediaStreamAudioSourceNode;
 
-    if (localStreamReady && isMicOn && localStreamRef.current) {
+    if (localStreamRef.current && isMicOn) {
         const stream = localStreamRef.current;
         const audioTracks = stream.getAudioTracks();
         if (audioTracks.length === 0 || !audioTracks.some(t => t.enabled)) {
@@ -281,15 +262,13 @@ function ChatPageContent() {
     }
 
     return () => {
-        if (animationFrameId) {
-            cancelAnimationFrame(animationFrameId);
-        }
+        if (animationFrameId) cancelAnimationFrame(animationFrameId);
         source?.disconnect();
         if (audioContext?.state !== 'closed') {
             audioContext?.close().catch(e => console.error("Error closing audio context", e));
         }
     };
-}, [localStreamReady, isMicOn]);
+  }, [isMicOn]);
 
 
   // --- User Actions ---
