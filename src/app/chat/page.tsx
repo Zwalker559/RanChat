@@ -118,13 +118,6 @@ function ChatPageContent() {
     peerConnection.ontrack = (event) => {
         if (event.streams && event.streams[0]) {
             setRemoteStream(event.streams[0]);
-        } else {
-            // Fallback for older browsers
-            const newStream = new MediaStream();
-            event.track.onunmute = () => {
-                newStream.addTrack(event.track);
-                setRemoteStream(newStream);
-            };
         }
     };
 
@@ -177,8 +170,9 @@ function ChatPageContent() {
       try {
         if (isCaller) {
           unsubscribers.push(listenForAnswer(chatId, partnerUid, async (answer) => {
-             // Only set the remote description if we're in the correct state
-             if (peerConnection.signalingState === 'have-local-offer') {
+             // This check was too strict and caused race conditions.
+             // Relying on the browser's internal state machine is more robust.
+             if (peerConnection.signalingState !== 'closed') {
                 await peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
              }
           }));
@@ -187,10 +181,12 @@ function ChatPageContent() {
           await createOffer(chatId, user.uid, { type: offer.type, sdp: offer.sdp });
         } else {
           unsubscribers.push(listenForOffer(chatId, partnerUid, async (offer) => {
-            await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
-            const answer = await peerConnection.createAnswer();
-            await peerConnection.setLocalDescription(answer);
-            await createAnswer(chatId, user.uid, { type: answer.type, sdp: answer.sdp });
+            if (peerConnection.signalingState !== 'closed') {
+                await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
+                const answer = await peerConnection.createAnswer();
+                await peerConnection.setLocalDescription(answer);
+                await createAnswer(chatId, user.uid, { type: answer.type, sdp: answer.sdp });
+            }
           }));
         }
       } catch (error) {
@@ -220,7 +216,7 @@ function ChatPageContent() {
       setLocalStream(null);
       setRemoteStream(null);
     };
-  }, [localStream, user, chatId, partnerUid, isCaller, router, toast]);
+  }, [user, chatId, partnerUid, isCaller, router, toast, localStream]);
 
   // Effect 3: Attach streams to video elements.
   useEffect(() => {
