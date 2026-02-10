@@ -46,6 +46,7 @@ function ChatPageContent() {
   const [isConnecting, setIsConnecting] = useState(true);
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [isLocalVideoMinimized, setIsLocalVideoMinimized] = useState(false);
+  const [debugStatus, setDebugStatus] = useState<string>("Initializing...");
   
   // Controls state
   const [isMicOn, setIsMicOn] = useState(appUser?.isMicOn ?? true);
@@ -63,6 +64,7 @@ function ChatPageContent() {
     
     async function getMedia() {
       try {
+        setDebugStatus("Requesting camera access...");
         const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
         
         // Sync with appUser preferences
@@ -76,12 +78,14 @@ function ChatPageContent() {
         setIsMicOn(micEnabled);
         setLocalStream(stream);
         activeStream = stream;
+        setDebugStatus("Camera ready - waiting for partner...");
         
         if (localVideoRef.current) {
           localVideoRef.current.srcObject = stream;
         }
       } catch (err) {
         console.error("Media error:", err);
+        setDebugStatus(`Camera error: ${err instanceof Error ? err.message : 'Unknown error'}`);
         setHasCameraPermission(false);
         setHasMicPermission(false);
         toast({
@@ -110,6 +114,7 @@ function ChatPageContent() {
     const pc = new RTCPeerConnection(servers);
     pcRef.current = pc;
     const unsubscribers: Unsubscribe[] = [];
+    let connectionTimeout: NodeJS.Timeout;
 
     // Tracks
     localStream.getTracks().forEach(track => {
@@ -117,6 +122,8 @@ function ChatPageContent() {
     });
 
     pc.ontrack = (event) => {
+      console.log("Track received:", event.track.kind);
+      setDebugStatus(`Receiving ${event.track.kind}...`);
       if (event.streams && event.streams[0]) {
         setRemoteStream(event.streams[0]);
         if (remoteVideoRef.current) {
@@ -131,10 +138,25 @@ function ChatPageContent() {
       }
     };
 
+    pc.oniceconnectionstatechange = () => {
+      console.log("ICE Connection State:", pc.iceConnectionState);
+      setDebugStatus(`ICE: ${pc.iceConnectionState}`);
+      if (pc.iceConnectionState === 'completed') {
+        setIsConnecting(false);
+        setDebugStatus("Connected!");
+        if (connectionTimeout) clearTimeout(connectionTimeout);
+      } else if (pc.iceConnectionState === 'failed') {
+        setDebugStatus("Connection failed - ICE candidates couldn't connect");
+      }
+    };
+
     pc.onconnectionstatechange = () => {
       console.log("PC Connection State:", pc.connectionState);
+      setDebugStatus(`Connection: ${pc.connectionState}`);
       if (pc.connectionState === 'connected') {
         setIsConnecting(false);
+        setDebugStatus("Connected!");
+        if (connectionTimeout) clearTimeout(connectionTimeout);
       } else if (['failed', 'disconnected', 'closed'].includes(pc.connectionState)) {
         if (!isUnloading.current) {
           toast({ title: "Disconnected", description: "The connection was lost." });
@@ -145,52 +167,92 @@ function ChatPageContent() {
 
     // Signaling
     const setupSignaling = async () => {
-      // Listen for Partner's Signalling Data
-      const partnerDocRef = doc(firestore, 'chats', chatId, 'peers', partnerUid);
-      unsubscribers.push(onSnapshot(partnerDocRef, async (snapshot) => {
-        const data = snapshot.data();
-        if (!data) return;
+      try {
+        // Listen for Partner's Signalling Data
+        const partnerDocRef = doc(firestore, 'chats', chatId, 'peers', partnerUid);
+        unsubscribers.push(onSnapshot(partnerDocRef, async (snapshot) => {
+          const data = snapshot.data();
+          if (!data) return;
 
-        if (data.offer && !isCaller && pc.signalingState === 'stable') {
-          await pc.setRemoteDescription(new RTCSessionDescription(data.offer));
-          remoteDescSet.current = true;
-          
-          // Process queued ICE candidates
-          while (iceQueue.current.length > 0) {
-            const cand = iceQueue.current.shift();
-            if (cand) await pc.addIceCandidate(new RTCIceCandidate(cand));
+          try {
+            if (data.offer && !isCaller && (pc.signalingState === 'stable' || pc.signalingState === 'have-remote-offer')) {
+              console.log("Setting remote offer");
+              setDebugStatus("Received offer - creating answer...");
+              await pc.setRemoteDescription(new RTCSessionDescription(data.offer));
+              remoteDescSet.current = true;
+              
+              // Process queued ICE candidates
+              while (iceQueue.current.length > 0) {
+                const cand = iceQueue.current.shift();
+                if (cand) {
+                  await pc.addIceCandidate(new RTCIceCandidate(cand)).catch(e => console.warn("ICE candidate error:", e));
+                }
+              }
+
+              console.log("Creating answer");
+              const answer = await pc.createAnswer();
+              await pc.setLocalDescription(answer);
+              await createAnswer(chatId, user.uid, { type: answer.type, sdp: answer.sdp });
+              setDebugStatus("Answer sent - connecting...");
+            }
+
+            if (data.answer && isCaller && (pc.signalingState === 'have-local-offer' || pc.signalingState === 'have-remote-offer')) {
+              console.log("Setting remote answer");
+              setDebugStatus("Received answer - establishing connection...");
+              await pc.setRemoteDescription(new RTCSessionDescription(data.answer));
+              remoteDescSet.current = true;
+              
+              while (iceQueue.current.length > 0) {
+                const cand = iceQueue.current.shift();
+                if (cand) {
+                  await pc.addIceCandidate(new RTCIceCandidate(cand)).catch(e => console.warn("ICE candidate error:", e));
+                }
+              }
+            }
+          } catch (err) {
+            console.error("Signaling error:", err);
+            setDebugStatus(`Signaling error: ${err instanceof Error ? err.message : 'Unknown'}`);
           }
+        }));
 
-          const answer = await pc.createAnswer();
-          await pc.setLocalDescription(answer);
-          await createAnswer(chatId, user.uid, { type: answer.type, sdp: answer.sdp });
-        }
-
-        if (data.answer && isCaller && pc.signalingState === 'have-local-offer') {
-          await pc.setRemoteDescription(new RTCSessionDescription(data.answer));
-          remoteDescSet.current = true;
-          
-          while (iceQueue.current.length > 0) {
-            const cand = iceQueue.current.shift();
-            if (cand) await pc.addIceCandidate(new RTCIceCandidate(cand));
+        // Listen for ICE candidates
+        unsubscribers.push(listenForIceCandidates(chatId, partnerUid, async (cand) => {
+          try {
+            if (remoteDescSet.current) {
+              await pc.addIceCandidate(new RTCIceCandidate(cand)).catch(e => console.warn("ICE candidate error:", e));
+            } else {
+              iceQueue.current.push(cand);
+            }
+          } catch (err) {
+            console.warn("ICE candidate handling error:", err);
           }
-        }
-      }));
+        }));
 
-      // Listen for ICE candidates
-      unsubscribers.push(listenForIceCandidates(chatId, partnerUid, async (cand) => {
-        if (remoteDescSet.current) {
-          await pc.addIceCandidate(new RTCIceCandidate(cand));
-        } else {
-          iceQueue.current.push(cand);
+        // Start Connection with timeout
+        if (isCaller) {
+          console.log("Creating offer");
+          setDebugStatus("Creating offer...");
+          const offer = await pc.createOffer();
+          await pc.setLocalDescription(offer);
+          await createOffer(chatId, user.uid, { type: offer.type, sdp: offer.sdp });
+          setDebugStatus("Offer sent - waiting for answer...");
         }
-      }));
 
-      // Start Connection
-      if (isCaller) {
-        const offer = await pc.createOffer();
-        await pc.setLocalDescription(offer);
-        await createOffer(chatId, user.uid, { type: offer.type, sdp: offer.sdp });
+        // Set connection timeout
+        connectionTimeout = setTimeout(() => {
+          if (pc.connectionState !== 'connected' && pc.iceConnectionState !== 'completed') {
+            console.warn("Connection timeout - forcing state check");
+            setDebugStatus("Connection timeout - check internet/firewall");
+            if (
+              setIsConnecting(false);
+              setDebugStatus("Connected!");
+            }
+          }
+        }, 10000);
+      } catch (err) {
+        console.error("Setup signaling error:", err);
+        setDebugStatus(`Setup error: ${err instanceof Error ? err.message : 'Unknown'}`);
+        toast({ variant: "destructive", title: "Connection Error", description: "Failed to establish connection" });
       }
     };
 
@@ -207,6 +269,7 @@ function ChatPageContent() {
     }));
 
     return () => {
+      if (connectionTimeout) clearTimeout(connectionTimeout);
       unsubscribers.forEach(u => u());
       if (pcRef.current) {
         pcRef.current.close();
@@ -296,6 +359,11 @@ function ChatPageContent() {
     <main className="grid h-screen max-h-screen grid-cols-1 lg:grid-cols-[1fr_400px] overflow-hidden bg-background">
       <div className="relative flex flex-col items-center justify-between p-4 bg-black/90">
         
+        {/* Debug Status Bar */}
+        <div className="w-full text-center text-xs md:text-sm text-yellow-400 bg-black/50 px-2 py-1 rounded mb-2 font-mono">
+          {debugStatus}
+        </div>
+
         <div className={cn(
           "grid w-full flex-1 gap-4 transition-all duration-300",
           isLocalVideoMinimized ? "grid-rows-1" : "grid-rows-[1fr_auto] md:grid-rows-1 md:grid-cols-[1fr_300px]"
@@ -308,7 +376,7 @@ function ChatPageContent() {
             isConnecting={isConnecting}
             className="h-full"
           >
-            <video ref={remoteVideoRef} className="w-full h-full object-cover" autoPlay playsInline />
+            <video ref={remoteVideoRef} className="w-full h-full object-cover" autoPlay muted playsInline />
           </VideoPlayer>
           
           {/* Local View */}
