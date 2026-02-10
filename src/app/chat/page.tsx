@@ -141,7 +141,7 @@ function ChatPageContent() {
     pc.oniceconnectionstatechange = () => {
       console.log("ICE Connection State:", pc.iceConnectionState);
       setDebugStatus(`ICE: ${pc.iceConnectionState}`);
-      if (pc.iceConnectionState === 'completed') {
+      if ((pc.iceConnectionState as any) === 'connected') {
         setIsConnecting(false);
         setDebugStatus("Connected!");
         if (connectionTimeout) clearTimeout(connectionTimeout);
@@ -240,10 +240,10 @@ function ChatPageContent() {
 
         // Set connection timeout
         connectionTimeout = setTimeout(() => {
-          if (pc.connectionState !== 'connected' && pc.iceConnectionState !== 'completed') {
+          if (pc.connectionState !== 'connected' && (pc.iceConnectionState as any) !== 'connected') {
             console.warn("Connection timeout - forcing state check");
             setDebugStatus("Connection timeout - check internet/firewall");
-            if (
+            if ((pc.iceConnectionState as any) === 'connected') {
               setIsConnecting(false);
               setDebugStatus("Connected!");
             }
