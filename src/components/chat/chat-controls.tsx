@@ -63,17 +63,18 @@ export function ChatControls({
         <Tooltip>
           <TooltipTrigger asChild>
             <Button
-              variant={isMicOn ? "secondary" : "destructive"}
+              variant={!hasMicPermission ? "default" : (isMicOn ? "secondary" : "destructive")}
               size="icon"
               className={cn(
                 "h-12 w-12 rounded-full transition-all",
-                isMicOn && isSpeaking && "shadow-[0_0_15px_hsl(var(--chart-2))] ring-2 ring-[hsl(var(--chart-2))]"
+                isMicOn && isSpeaking && hasMicPermission && "shadow-[0_0_15px_hsl(var(--chart-2))] ring-2 ring-[hsl(var(--chart-2))]",
+                !hasMicPermission && "bg-black text-muted-foreground hover:bg-black border-2 border-border opacity-100 cursor-not-allowed"
               )}
               onClick={onToggleMic}
               aria-label={isMicOn ? "Mute microphone" : "Unmute microphone"}
               disabled={isConnecting || !hasMicPermission}
             >
-              {isMicOn ? <Mic /> : <MicOff />}
+              {!hasMicPermission ? <MicOff className="opacity-50" /> : (isMicOn ? <Mic /> : <MicOff />)}
             </Button>
           </TooltipTrigger>
           {!hasMicPermission && (
@@ -86,14 +87,17 @@ export function ChatControls({
         <Tooltip>
           <TooltipTrigger asChild>
             <Button
-              variant={isCamOn ? "secondary" : "destructive"}
+              variant={!hasCameraPermission ? "default" : (isCamOn ? "secondary" : "destructive")}
               size="icon"
-              className="h-12 w-12 rounded-full"
+              className={cn(
+                "h-12 w-12 rounded-full transition-all",
+                !hasCameraPermission && "bg-black text-muted-foreground hover:bg-black border-2 border-border opacity-100 cursor-not-allowed"
+              )}
               onClick={onToggleCam}
               aria-label={isCamOn ? "Turn off camera" : "Turn on camera"}
               disabled={isConnecting || !hasCameraPermission}
             >
-              {isCamOn ? <Video /> : <VideoOff />}
+              {!hasCameraPermission ? <VideoOff className="opacity-50" /> : (isCamOn ? <Video /> : <VideoOff />)}
             </Button>
           </TooltipTrigger>
           {!hasCameraPermission && (
